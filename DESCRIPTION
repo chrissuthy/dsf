@@ -1,0 +1,23 @@
+Package: dsf
+Type: Package
+Title: Destination Selection Functions for Redistribution Data
+Version: 0.0.0.9000
+Authors@R: person("Chris", "Sutherland", email = "chrissuthy@gmail.com",
+                  role = c("aut", "cre"))
+Description: Fits destination selection functions (DSFs), a competing-hazards
+    model for redistribution data in which an individual's origin, its
+    destination, and the full set of candidate destinations are known.
+    Covariates enter the redistribution scale (individual level) and the
+    destination attractiveness (destination level). Includes a simulator
+    that generates a landscape, trap array, and redistribution events.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports:
+    stats,
+    fields,
+    terra
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.1
