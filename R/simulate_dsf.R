@@ -23,9 +23,9 @@
 #' `sigma_formula = ~ src_cov` work without further processing. The raster is
 #' returned for use as a cost surface in the non-Euclidean DSF.
 #'
-#' If `design` is supplied, the landscape, traps and individuals are taken
-#' from it and all design arguments are ignored. This allows the same design
-#' to be reused with different parameters or across replicate dispersal draws.
+#' To hold the design fixed across replicates while redrawing dispersal, give
+#' the same `landscape_seed` on every call (or pass back `$design`). To let the
+#' design vary as well, leave `landscape_seed = NULL`.
 #'
 #' @param sigma_formula One-sided formula for the individual-level linear
 #'   predictor of \eqn{\log \sigma_i}. Terms refer to columns of the
@@ -47,8 +47,10 @@
 #' @param ncell Number of raster cells per side.
 #' @param buffer Traps and uniform births are placed at least this far (km)
 #'   from the landscape edge.
-#' @param surface Logical; simulate a landscape covariate? If `FALSE` the
-#'   covariate is zero everywhere.
+#' @param surface Logical; simulate a landscape covariate (a Gaussian random
+#'   field)? Only needed for destination covariates or the non-Euclidean DSF.
+#'   If `FALSE` (default) the covariate is zero everywhere and the raster is
+#'   constant.
 #' @param aRange Range parameter of the Matérn covariance, in km (the same
 #'   units as `L`), so the patch size does not change with `ncell`.
 #' @param smoothness Matérn smoothness; 0.5 is exponential.
@@ -60,9 +62,14 @@
 #'   every observation year.
 #' @param exclude_natal Logical; remove each individual's nearest trap
 #'   (distance zero when `births = "traps"`) from its choice set?
+#' @param landscape_seed Optional integer. If supplied, the landscape, trap
+#'   array and cohort design are drawn from a generator seeded with this value
+#'   and the previous RNG state is then restored, so repeated calls with the
+#'   same `landscape_seed` share one design while the dispersal draw varies.
+#'   If `NULL` (default), each call draws a fresh design.
 #' @param design Optional design list (`landscape`, `traps`, `animals`) from a
-#'   previous call, returned as `$design`.
-#' @param seed Optional integer passed to [set.seed()].
+#'   previous call, returned as `$design`; overrides `landscape_seed`.
+#' @param seed Optional integer passed to [set.seed()] for the whole call.
 #'
 #' @return A list with components
 #' \describe{
@@ -80,16 +87,20 @@
 #'
 #' @examples
 #' \donttest{
+#' # destination covariate needs a landscape surface
 #' sim <- simulate_dsf(~ age_c, ~ 0 + cov,
 #'                     beta_sigma = c(log(5), 0.3), beta_theta = 0.8,
-#'                     exclude_natal = TRUE, seed = 1)
+#'                     surface = TRUE, exclude_natal = TRUE, seed = 1)
 #' str(sim$ind_df)
 #' fit <- dsf(~ age_c, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat,
 #'            exclude_natal = TRUE)
 #' fit
 #'
-#' # reuse the same landscape and traps with a different parameter set
-#' sim2 <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(8), design = sim$design)
+#' # same design, different dispersal draw: fix the landscape seed
+#' sim2 <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), landscape_seed = 99)
+#' sim3 <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), landscape_seed = 99)
+#' identical(sim2$trap_df, sim3$trap_df)      # TRUE
+#' identical(sim2$ind_df$dest, sim3$ind_df$dest)   # FALSE
 #' }
 #'
 #' @importFrom stats model.matrix runif sd
@@ -101,62 +112,22 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
                          ntraps = 250, nyears = 5, nborn = 100,
                          prage = c(0.5, 0.3, 0.2),
                          L = 100, ncell = 1000, buffer = 10,
-                         surface = TRUE, aRange = 10, smoothness = 0.5,
+                         surface = FALSE, aRange = 10, smoothness = 0.5,
                          births = c("traps", "uniform"),
                          op_mat = NULL, exclude_natal = FALSE,
-                         design = NULL, seed = NULL) {
+                         landscape_seed = NULL, design = NULL, seed = NULL) {
 
   if (!is.null(seed)) set.seed(seed)
   births <- match.arg(births)
 
   ## ------------------------------------------------------------ design
   if (is.null(design)) {
-    nall <- nyears * nborn
-
-    if (surface) {
-      ## aRange is in km; convert to cells. The circulant embedding needs a
-      ## torus comfortably larger than the correlation range, so enlarge it
-      ## (M, N) to at least 4 ranges, rounded up to a power of two.
-      range_cells <- aRange / (L / ncell)
-      M <- 2^ceiling(log2(max(2 * ncell, 4 * range_cells)))
-      obj <- fields::matern.image.cov(grid = list(x = seq_len(ncell), y = seq_len(ncell)),
-                                      aRange = range_cells, smoothness = smoothness,
-                                      M = M, N = M, setup = TRUE)
-      m <- fields::sim.rf(obj)
-      m <- (m - mean(m)) / stats::sd(m)
-    } else {
-      m <- matrix(0, ncell, ncell)
-    }
-    landscape <- terra::rast(t(m[, ncell:1]), extent = terra::ext(0, L, 0, L), crs = "")
-    names(landscape) <- "cov"
-
-    cells  <- as.data.frame(terra::crds(landscape))
-    inside <- cells$x > buffer & cells$x < L - buffer &
-              cells$y > buffer & cells$y < L - buffer
-    pick   <- sample(which(inside), ntraps)
-    traps  <- data.frame(trap_id = seq_len(ntraps), x = cells$x[pick], y = cells$y[pick])
-    traps$cov <- terra::extract(landscape, traps[, c("x", "y")])$cov
-
-    if (births == "traps") {
-      b  <- sample(ntraps, nall, replace = TRUE)
-      sx <- traps$x[b]; sy <- traps$y[b]
-    } else {
-      sx <- stats::runif(nall, buffer, L - buffer)
-      sy <- stats::runif(nall, buffer, L - buffer)
-    }
-    animals <- data.frame(id = seq_len(nall), src_x = sx, src_y = sy,
-                          birth_year = rep(seq_len(nyears), each = nborn),
-                          age = sample(1:3, nall, replace = TRUE, prob = prage))
-    animals$obs_year <- animals$birth_year + animals$age
-    animals$age_c    <- animals$age - 1
-    animals$src_cov  <- terra::extract(landscape, animals[, c("src_x", "src_y")])$cov
-
-    design <- list(landscape = landscape, traps = traps, animals = animals)
-  } else {
-    landscape <- design$landscape
-    traps     <- design$traps
-    animals   <- design$animals
+    design <- make_design(ntraps, nyears, nborn, prage, L, ncell, buffer,
+                          surface, aRange, smoothness, births, landscape_seed)
   }
+  landscape <- design$landscape
+  traps     <- design$traps
+  animals   <- design$animals
   n <- nrow(animals); J <- nrow(traps)
 
   ## ------------------------------------------------------------ sigma_i
@@ -221,4 +192,62 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
 
   list(ind_df = ind_df, trap_df = traps, op_mat = op_mat,
        landscape = landscape, design = design)
+}
+
+## Build landscape, traps and cohorts. With a seed, the RNG is seeded inside a
+## local scope and restored afterwards, so the design is reproducible while the
+## caller's random stream (and hence the dispersal draw) is untouched.
+make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
+                        surface, aRange, smoothness, births, landscape_seed) {
+  if (!is.null(landscape_seed)) {
+    had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+    if (had_seed) old_seed <- get(".Random.seed", envir = globalenv())
+    on.exit({
+      if (had_seed) assign(".Random.seed", old_seed, envir = globalenv())
+      else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+        rm(".Random.seed", envir = globalenv())
+    }, add = TRUE)
+    set.seed(landscape_seed)
+  }
+  nall <- nyears * nborn
+
+  if (surface) {
+    ## aRange is in km; convert to cells. The circulant embedding needs a
+    ## torus comfortably larger than the correlation range, so enlarge it
+    ## (M, N) to at least 4 ranges, rounded up to a power of two.
+    range_cells <- aRange / (L / ncell)
+    M <- 2^ceiling(log2(max(2 * ncell, 4 * range_cells)))
+    obj <- fields::matern.image.cov(grid = list(x = seq_len(ncell), y = seq_len(ncell)),
+                                    aRange = range_cells, smoothness = smoothness,
+                                    M = M, N = M, setup = TRUE)
+    m <- fields::sim.rf(obj)
+    m <- (m - mean(m)) / stats::sd(m)
+  } else {
+    m <- matrix(0, ncell, ncell)
+  }
+  landscape <- terra::rast(t(m[, ncell:1]), extent = terra::ext(0, L, 0, L), crs = "")
+  names(landscape) <- "cov"
+
+  cells  <- as.data.frame(terra::crds(landscape))
+  inside <- cells$x > buffer & cells$x < L - buffer &
+            cells$y > buffer & cells$y < L - buffer
+  pick   <- sample(which(inside), ntraps)
+  traps  <- data.frame(trap_id = seq_len(ntraps), x = cells$x[pick], y = cells$y[pick])
+  traps$cov <- terra::extract(landscape, traps[, c("x", "y")])$cov
+
+  if (births == "traps") {
+    b  <- sample(ntraps, nall, replace = TRUE)
+    sx <- traps$x[b]; sy <- traps$y[b]
+  } else {
+    sx <- stats::runif(nall, buffer, L - buffer)
+    sy <- stats::runif(nall, buffer, L - buffer)
+  }
+  animals <- data.frame(id = seq_len(nall), src_x = sx, src_y = sy,
+                        birth_year = rep(seq_len(nyears), each = nborn),
+                        age = sample(1:3, nall, replace = TRUE, prob = prage))
+  animals$obs_year <- animals$birth_year + animals$age
+  animals$age_c    <- animals$age - 1
+  animals$src_cov  <- terra::extract(landscape, animals[, c("src_x", "src_y")])$cov
+
+  list(landscape = landscape, traps = traps, animals = animals)
 }

@@ -68,7 +68,7 @@
 #' \donttest{
 #' sim <- simulate_dsf(~ age_c, ~ 0 + cov,
 #'                     beta_sigma = c(log(5), 0.3), beta_theta = 0.8,
-#'                     exclude_natal = TRUE, seed = 1)
+#'                     surface = TRUE, exclude_natal = TRUE, seed = 1)
 #' f0 <- dsf(~ 1,     ~ 1,       sim$ind_df, sim$trap_df, sim$op_mat, exclude_natal = TRUE)
 #' f1 <- dsf(~ age_c, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat, exclude_natal = TRUE)
 #' f1

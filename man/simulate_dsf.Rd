@@ -16,12 +16,13 @@ simulate_dsf(
   L = 100,
   ncell = 1000,
   buffer = 10,
-  surface = TRUE,
+  surface = FALSE,
   aRange = 10,
   smoothness = 0.5,
   births = c("traps", "uniform"),
   op_mat = NULL,
   exclude_natal = FALSE,
+  landscape_seed = NULL,
   design = NULL,
   seed = NULL
 )
@@ -58,8 +59,10 @@ the log scale. \code{NULL} when \code{theta_formula = ~ 1}.}
 \item{buffer}{Traps and uniform births are placed at least this far (km)
 from the landscape edge.}
 
-\item{surface}{Logical; simulate a landscape covariate? If \code{FALSE} the
-covariate is zero everywhere.}
+\item{surface}{Logical; simulate a landscape covariate (a Gaussian random
+field)? Only needed for destination covariates or the non-Euclidean DSF.
+If \code{FALSE} (default) the covariate is zero everywhere and the raster is
+constant.}
 
 \item{aRange}{Range parameter of the Matérn covariance, in km (the same
 units as \code{L}), so the patch size does not change with \code{ncell}.}
@@ -77,10 +80,16 @@ every observation year.}
 \item{exclude_natal}{Logical; remove each individual's nearest trap
 (distance zero when \code{births = "traps"}) from its choice set?}
 
-\item{design}{Optional design list (\code{landscape}, \code{traps}, \code{animals}) from a
-previous call, returned as \verb{$design}.}
+\item{landscape_seed}{Optional integer. If supplied, the landscape, trap
+array and cohort design are drawn from a generator seeded with this value
+and the previous RNG state is then restored, so repeated calls with the
+same \code{landscape_seed} share one design while the dispersal draw varies.
+If \code{NULL} (default), each call draws a fresh design.}
 
-\item{seed}{Optional integer passed to \code{\link[=set.seed]{set.seed()}}.}
+\item{design}{Optional design list (\code{landscape}, \code{traps}, \code{animals}) from a
+previous call, returned as \verb{$design}; overrides \code{landscape_seed}.}
+
+\item{seed}{Optional integer passed to \code{\link[=set.seed]{set.seed()}} for the whole call.}
 }
 \value{
 A list with components
@@ -119,22 +128,26 @@ origins as \code{src_cov}, so \code{theta_formula = ~ 0 + cov} and
 \code{sigma_formula = ~ src_cov} work without further processing. The raster is
 returned for use as a cost surface in the non-Euclidean DSF.
 
-If \code{design} is supplied, the landscape, traps and individuals are taken
-from it and all design arguments are ignored. This allows the same design
-to be reused with different parameters or across replicate dispersal draws.
+To hold the design fixed across replicates while redrawing dispersal, give
+the same \code{landscape_seed} on every call (or pass back \verb{$design}). To let the
+design vary as well, leave \code{landscape_seed = NULL}.
 }
 \examples{
 \donttest{
+# destination covariate needs a landscape surface
 sim <- simulate_dsf(~ age_c, ~ 0 + cov,
                     beta_sigma = c(log(5), 0.3), beta_theta = 0.8,
-                    exclude_natal = TRUE, seed = 1)
+                    surface = TRUE, exclude_natal = TRUE, seed = 1)
 str(sim$ind_df)
 fit <- dsf(~ age_c, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat,
            exclude_natal = TRUE)
 fit
 
-# reuse the same landscape and traps with a different parameter set
-sim2 <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(8), design = sim$design)
+# same design, different dispersal draw: fix the landscape seed
+sim2 <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), landscape_seed = 99)
+sim3 <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), landscape_seed = 99)
+identical(sim2$trap_df, sim3$trap_df)      # TRUE
+identical(sim2$ind_df$dest, sim3$ind_df$dest)   # FALSE
 }
 
 }
