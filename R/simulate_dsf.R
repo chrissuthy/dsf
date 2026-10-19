@@ -55,11 +55,14 @@
 #'   units as `L`), so the patch size does not change with `ncell`.
 #' @param smoothness Matérn smoothness; 0.5 is exponential.
 #' @param trap_layout `"random"` (default) places traps uniformly at random
-#'   inside the buffer; `"grid"` places them on a regular square lattice with
-#'   a small random jitter, so that a given `ntraps` is a density rather than
-#'   a draw. The lattice is `nx` by `ny` with `nx * ny = ntraps`, as close to
-#'   square as the factorisation of `ntraps` allows (a prime `ntraps` gives a
-#'   single row; choose a composite number).
+#'   inside the buffer; `"grid"` places them on a regular lattice, so that a
+#'   given `ntraps` is a density rather than a draw. The lattice is `nx` by
+#'   `ny` with `nx * ny = ntraps`, as close to square as the factorisation of
+#'   `ntraps` allows (a prime `ntraps` gives a single row; choose a composite
+#'   number, and a square number for equal spacing in both directions).
+#' @param jitter For `trap_layout = "grid"`, the maximum random displacement
+#'   of each trap from its lattice node, as a fraction of the lattice spacing
+#'   (uniform in each direction). `0` (default) gives a regular lattice.
 #' @param births `"traps"` places each origin at a randomly chosen trap
 #'   (the parent's capture location); `"uniform"` draws origins uniformly
 #'   inside the buffer.
@@ -126,7 +129,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
                          prage = c(0.5, 0.3, 0.2),
                          L = 100, ncell = 1000, buffer = 10,
                          surface = FALSE, aRange = 10, smoothness = 0.5,
-                         trap_layout = c("random", "grid"),
+                         trap_layout = c("random", "grid"), jitter = 0,
                          births = c("traps", "uniform"),
                          cost = NULL, beta_cost = NULL, cost_res = 1,
                          op_mat = NULL, exclude_natal = FALSE,
@@ -140,7 +143,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
   if (is.null(design)) {
     design <- make_design(ntraps, nyears, nborn, prage, L, ncell, buffer,
                           surface, aRange, smoothness, births, trap_layout,
-                          landscape_seed)
+                          jitter, landscape_seed)
   }
   landscape <- design$landscape
   traps     <- design$traps
@@ -226,7 +229,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
 ## caller's random stream (and hence the dispersal draw) is untouched.
 make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
                         surface, aRange, smoothness, births, trap_layout,
-                        landscape_seed) {
+                        jitter, landscape_seed) {
   if (!is.null(landscape_seed)) {
     had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
     if (had_seed) old_seed <- get(".Random.seed", envir = globalenv())
@@ -264,15 +267,18 @@ make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
     tx <- cells$x[pick]; ty <- cells$y[pick]
   } else {
     ## rectangular lattice nx * ny = ntraps, as close to square as the
-    ## factorisation allows, jittered by up to 1/4 of the spacing
+    ## factorisation allows, optionally jittered by a fraction of the spacing
     nx <- max(which(ntraps %% seq_len(floor(sqrt(ntraps))) == 0))
     ny <- ntraps / nx
     if (ny < nx) { tmp <- nx; nx <- ny; ny <- tmp }
     spx <- (L - 2 * buffer) / nx; spy <- (L - 2 * buffer) / ny
     gg  <- expand.grid(x = buffer + spx * (seq_len(nx) - 0.5),
                        y = buffer + spy * (seq_len(ny) - 0.5))
-    tx <- gg$x + stats::runif(ntraps, -spx / 4, spx / 4)
-    ty <- gg$y + stats::runif(ntraps, -spy / 4, spy / 4)
+    tx <- gg$x; ty <- gg$y
+    if (jitter > 0) {
+      tx <- tx + stats::runif(ntraps, -jitter * spx, jitter * spx)
+      ty <- ty + stats::runif(ntraps, -jitter * spy, jitter * spy)
+    }
   }
   traps <- data.frame(trap_id = seq_len(ntraps), x = tx, y = ty)
   traps$cov <- terra::extract(landscape, traps[, c("x", "y")])$cov

@@ -20,6 +20,7 @@ simulate_dsf(
   aRange = 10,
   smoothness = 0.5,
   trap_layout = c("random", "grid"),
+  jitter = 0,
   births = c("traps", "uniform"),
   cost = NULL,
   beta_cost = NULL,
@@ -74,11 +75,15 @@ units as \code{L}), so the patch size does not change with \code{ncell}.}
 \item{smoothness}{Matérn smoothness; 0.5 is exponential.}
 
 \item{trap_layout}{\code{"random"} (default) places traps uniformly at random
-inside the buffer; \code{"grid"} places them on a regular square lattice with
-a small random jitter, so that a given \code{ntraps} is a density rather than
-a draw. The lattice is \code{nx} by \code{ny} with \code{nx * ny = ntraps}, as close to
-square as the factorisation of \code{ntraps} allows (a prime \code{ntraps} gives a
-single row; choose a composite number).}
+inside the buffer; \code{"grid"} places them on a regular lattice, so that a
+given \code{ntraps} is a density rather than a draw. The lattice is \code{nx} by
+\code{ny} with \code{nx * ny = ntraps}, as close to square as the factorisation of
+\code{ntraps} allows (a prime \code{ntraps} gives a single row; choose a composite
+number, and a square number for equal spacing in both directions).}
+
+\item{jitter}{For \code{trap_layout = "grid"}, the maximum random displacement
+of each trap from its lattice node, as a fraction of the lattice spacing
+(uniform in each direction). \code{0} (default) gives a regular lattice.}
 
 \item{births}{\code{"traps"} places each origin at a randomly chosen trap
 (the parent's capture location); \code{"uniform"} draws origins uniformly

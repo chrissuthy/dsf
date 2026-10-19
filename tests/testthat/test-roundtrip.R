@@ -61,7 +61,13 @@ test_that("grid trap layout gives the requested density and respects buffer = 0"
                       buffer = 0, trap_layout = "grid", births = "uniform", seed = 8)
   expect_equal(nrow(sim$trap_df), 16)
   expect_true(all(sim$trap_df$x > 0 & sim$trap_df$x < 40))
-  ## jittered lattice: nearest-neighbour spacing close to L / 4 = 10 km
+  ## regular lattice: nearest-neighbour spacing exactly L / 4 = 10 km
   dd <- as.matrix(dist(sim$trap_df[, c("x", "y")])); diag(dd) <- Inf
-  expect_true(abs(mean(apply(dd, 1, min)) - 10) < 2.5)
+  expect_equal(unname(apply(dd, 1, min)), rep(10, 16))
+  ## jittered lattice: close to it
+  simj <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ntraps = 16, L = 40, ncell = 200,
+                       buffer = 0, trap_layout = "grid", jitter = 0.25,
+                       births = "uniform", seed = 8)
+  ddj <- as.matrix(dist(simj$trap_df[, c("x", "y")])); diag(ddj) <- Inf
+  expect_true(abs(mean(apply(ddj, 1, min)) - 10) < 2.5)
 })
