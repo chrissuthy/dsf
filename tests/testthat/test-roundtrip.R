@@ -56,6 +56,22 @@ test_that("alpha = 0 cost distance approximates Euclidean", {
   expect_true(all(ratio > 0.9 & ratio < 1.15))
 })
 
+test_that("trap_cov supplies destination covariates and is part of the fixed design", {
+  f <- function(n) runif(n, -2, 2)
+  a <- simulate_dsf(~ 1, ~ 0 + cov, beta_sigma = log(5), beta_theta = 0.5,
+                    ncell = 100, trap_cov = f, landscape_seed = 9)
+  b <- simulate_dsf(~ 1, ~ 0 + cov, beta_sigma = log(5), beta_theta = 0.5,
+                    ncell = 100, trap_cov = f, landscape_seed = 9)
+  expect_true(all(a$trap_df$cov >= -2 & a$trap_df$cov <= 2))
+  expect_identical(a$trap_df$cov, b$trap_df$cov)
+  ## data frame with a new column name
+  d <- simulate_dsf(~ 1, ~ 0 + bait, beta_sigma = log(5), beta_theta = 1, ncell = 100,
+                    trap_cov = data.frame(bait = rbinom(250, 1, 0.5)), seed = 10)
+  expect_true("bait" %in% names(d$trap_df))
+  expect_error(simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 100, trap_cov = 1:3),
+               "one row")
+})
+
 test_that("grid trap layout gives the requested density and respects buffer = 0", {
   sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ntraps = 16, L = 40, ncell = 200,
                       buffer = 0, trap_layout = "grid", births = "uniform", seed = 8)

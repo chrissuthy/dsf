@@ -21,6 +21,7 @@ simulate_dsf(
   smoothness = 0.5,
   trap_layout = c("random", "grid"),
   jitter = 0,
+  trap_cov = NULL,
   births = c("traps", "uniform"),
   cost = NULL,
   beta_cost = NULL,
@@ -84,6 +85,13 @@ number, and a square number for equal spacing in both directions).}
 \item{jitter}{For \code{trap_layout = "grid"}, the maximum random displacement
 of each trap from its lattice node, as a fraction of the lattice spacing
 (uniform in each direction). \code{0} (default) gives a regular lattice.}
+
+\item{trap_cov}{Destination covariates. \code{NULL} (default) extracts \code{cov}
+at each trap from the landscape raster. Otherwise a numeric vector (one
+value per trap, stored as \code{cov}), a data frame with one row per trap
+(columns added to \code{trap_df}, replacing any of the same name), or a
+function of \code{ntraps} returning either. A function is evaluated inside
+the \code{landscape_seed} scope, so the covariate is part of the fixed design.}
 
 \item{births}{\code{"traps"} places each origin at a randomly chosen trap
 (the parent's capture location); \code{"uniform"} draws origins uniformly

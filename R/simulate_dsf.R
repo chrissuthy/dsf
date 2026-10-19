@@ -63,6 +63,12 @@
 #' @param jitter For `trap_layout = "grid"`, the maximum random displacement
 #'   of each trap from its lattice node, as a fraction of the lattice spacing
 #'   (uniform in each direction). `0` (default) gives a regular lattice.
+#' @param trap_cov Destination covariates. `NULL` (default) extracts `cov`
+#'   at each trap from the landscape raster. Otherwise a numeric vector (one
+#'   value per trap, stored as `cov`), a data frame with one row per trap
+#'   (columns added to `trap_df`, replacing any of the same name), or a
+#'   function of `ntraps` returning either. A function is evaluated inside
+#'   the `landscape_seed` scope, so the covariate is part of the fixed design.
 #' @param births `"traps"` places each origin at a randomly chosen trap
 #'   (the parent's capture location); `"uniform"` draws origins uniformly
 #'   inside the buffer.
@@ -130,7 +136,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
                          L = 100, ncell = 1000, buffer = 10,
                          surface = FALSE, aRange = 10, smoothness = 0.5,
                          trap_layout = c("random", "grid"), jitter = 0,
-                         births = c("traps", "uniform"),
+                         trap_cov = NULL, births = c("traps", "uniform"),
                          cost = NULL, beta_cost = NULL, cost_res = 1,
                          op_mat = NULL, exclude_natal = FALSE,
                          landscape_seed = NULL, design = NULL, seed = NULL) {
@@ -143,7 +149,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
   if (is.null(design)) {
     design <- make_design(ntraps, nyears, nborn, prage, L, ncell, buffer,
                           surface, aRange, smoothness, births, trap_layout,
-                          jitter, landscape_seed)
+                          jitter, trap_cov, landscape_seed)
   }
   landscape <- design$landscape
   traps     <- design$traps
@@ -229,7 +235,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
 ## caller's random stream (and hence the dispersal draw) is untouched.
 make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
                         surface, aRange, smoothness, births, trap_layout,
-                        jitter, landscape_seed) {
+                        jitter, trap_cov, landscape_seed) {
   if (!is.null(landscape_seed)) {
     had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
     if (had_seed) old_seed <- get(".Random.seed", envir = globalenv())
@@ -282,6 +288,16 @@ make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
   }
   traps <- data.frame(trap_id = seq_len(ntraps), x = tx, y = ty)
   traps$cov <- terra::extract(landscape, traps[, c("x", "y")])$cov
+  if (!is.null(trap_cov)) {
+    if (is.function(trap_cov)) trap_cov <- trap_cov(ntraps)
+    if (is.numeric(trap_cov) && is.null(dim(trap_cov))) trap_cov <- data.frame(cov = trap_cov)
+    trap_cov <- as.data.frame(trap_cov)
+    if (nrow(trap_cov) != ntraps)
+      stop("trap_cov must have one row (or value) per trap", call. = FALSE)
+    if (any(c("trap_id", "x", "y") %in% names(trap_cov)))
+      stop("trap_cov columns cannot be named trap_id, x or y", call. = FALSE)
+    traps[names(trap_cov)] <- trap_cov
+  }
 
   if (births == "traps") {
     b  <- sample(ntraps, nall, replace = TRUE)
