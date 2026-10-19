@@ -22,6 +22,14 @@
 #' by `op_mat`: the destinations available to individual \eqn{i} are the
 #' traps operational in `ind_df$obs_year[i]`.
 #'
+#' With `cost` and `landscape` supplied, Euclidean distance is replaced by the
+#' least-cost (ecological) distance through a resistance surface whose cell
+#' cost is \eqn{\exp(\alpha^\top c(x))}, and \eqn{\alpha} is estimated
+#' alongside the other parameters (coefficients named `cost:`). Paths are
+#' computed on the landscape aggregated to `cost_res`; see [make_cost_fun()].
+#' \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
+#' likelihood-ratio test against the Euclidean fit tests the landscape effect.
+#'
 #' Parameters are estimated on the log scale with [stats::optim()] (BFGS);
 #' standard errors are from the inverse numerical Hessian.
 #'
@@ -44,8 +52,14 @@
 #' @param exclude_natal Logical; remove each individual's nearest trap from
 #'   its choice set. Use when origins are trap locations and an individual
 #'   cannot be recorded at its natal trap.
+#' @param cost Optional one-sided formula naming layers of `landscape` that
+#'   define the resistance surface, e.g. `~ cov`. `NULL` (default) fits the
+#'   Euclidean model.
+#' @param landscape `SpatRaster` with the layers named in `cost`.
+#' @param cost_res Cell size for least-cost path calculations; the landscape
+#'   is aggregated to this resolution. Coarser is faster.
 #' @param start Optional numeric vector of starting values, in the order
-#'   `c(beta_sigma, beta_theta)`.
+#'   `c(beta_sigma, beta_theta, alpha)`.
 #' @param hessian Logical; compute standard errors?
 #'
 #' @return An object of class `"dsf"`: a list with
@@ -57,7 +71,9 @@
 #'   \item{`sigma`, `theta`}{The formulas.}
 #'   \item{`Xs`, `Xt`}{Design matrices.}
 #'   \item{`avail`}{Logical n-by-J availability matrix used in the likelihood.}
-#'   \item{`d2`}{n-by-J matrix of squared distances.}
+#'   \item{`d2`}{n-by-J matrix of squared distances at the estimate.}
+#'   \item{`cost_fun`}{For the non-Euclidean model, the distance calculator
+#'     from [make_cost_fun()]; otherwise `NULL`.}
 #'   \item{`n`, `J`, `ind_df`, `trap_df`, `optim`}{Inputs and the raw
 #'     optimiser output.}
 #' }
@@ -78,7 +94,8 @@
 #' @importFrom stats model.matrix optim median setNames
 #' @export
 dsf <- function(sigma = ~ 1, theta = ~ 1, ind_df, trap_df, op_mat = NULL,
-                exclude_natal = FALSE, start = NULL, hessian = TRUE) {
+                exclude_natal = FALSE, cost = NULL, landscape = NULL, cost_res = 1,
+                start = NULL, hessian = TRUE) {
 
   ## ------------------------------------------------------------ checks
   need_i <- c("src_x", "src_y", "dest")
@@ -107,7 +124,16 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, ind_df, trap_df, op_mat = NULL,
   } else rep(0, J)
 
   ## ------------------------------------------------------------ distances & availability
+  ## Euclidean d2 is always computed: it identifies the natal trap and gives
+  ## starting values. For the cost model the likelihood recomputes d2(alpha).
   d2 <- outer(ind_df$src_x, trap_df$x, "-")^2 + outer(ind_df$src_y, trap_df$y, "-")^2
+  cost_fun <- NULL; k <- 0
+  if (!is.null(cost)) {
+    if (is.null(landscape)) stop("landscape is required when cost is supplied", call. = FALSE)
+    cost_fun <- make_cost_fun(landscape, cost, cost_res,
+                              ind_df[, c("src_x", "src_y")], trap_df[, c("x", "y")])
+    k <- length(cost_fun$names)
+  }
 
   if (is.null(op_mat)) {
     message("op_mat not supplied: assuming every destination available to every individual")
@@ -138,7 +164,8 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, ind_df, trap_df, op_mat = NULL,
   nll <- function(par) {
     log_sigma <- drop(Xs %*% par[seq_len(p)])
     log_theta <- offset + if (q > 0) drop(Xt %*% par[p + seq_len(q)]) else 0
-    ll <- -d2 / (2 * exp(2 * log_sigma)) +
+    dd <- if (k > 0) cost_fun$fun(par[p + q + seq_len(k)]) else d2
+    ll <- -dd / (2 * exp(2 * log_sigma)) +
           matrix(log_theta, n, J, byrow = TRUE) + mask
     mx <- apply(ll, 1, max)
     -sum(ll[obs] - (mx + log(rowSums(exp(ll - mx)))))
@@ -146,15 +173,17 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, ind_df, trap_df, op_mat = NULL,
 
   ## ------------------------------------------------------------ fit
   if (is.null(start))
-    start <- c(log(stats::median(sqrt(d2[obs])) + 0.1), rep(0, p - 1 + q))
-  if (length(start) != p + q)
-    stop("start must have length ", p + q, call. = FALSE)
+    start <- c(log(stats::median(sqrt(d2[obs])) + 0.1), rep(0, p - 1 + q + k))
+  if (length(start) != p + q + k)
+    stop("start must have length ", p + q + k, call. = FALSE)
 
   fit <- stats::optim(start, nll, method = "BFGS", hessian = hessian,
                       control = list(maxit = 500, reltol = 1e-10))
 
   nms <- c(paste0("sigma:", colnames(Xs)),
-           if (q > 0) paste0("theta:", colnames(Xt)))
+           if (q > 0) paste0("theta:", colnames(Xt)),
+           if (k > 0) paste0("cost:", cost_fun$names))
+  if (k > 0) d2 <- cost_fun$fun(fit$par[p + q + seq_len(k)])
   est <- stats::setNames(fit$par, nms)
   se  <- if (hessian) {
     tryCatch(stats::setNames(sqrt(diag(solve(fit$hessian))), nms),
@@ -165,8 +194,9 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, ind_df, trap_df, op_mat = NULL,
                  logLik = -fit$value, npar = length(est),
                  AIC = 2 * fit$value + 2 * length(est),
                  convergence = fit$convergence,
-                 sigma = sigma, theta = theta, Xs = Xs, Xt = Xt,
+                 sigma = sigma, theta = theta, cost = cost, Xs = Xs, Xt = Xt,
                  n = n, J = J, avail = avail, d2 = d2, obs = obs, offset = offset,
+                 cost_fun = cost_fun, cost_res = cost_res,
                  ind_df = ind_df, trap_df = trap_df, optim = fit),
             class = "dsf")
 }
@@ -177,7 +207,8 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, ind_df, trap_df, op_mat = NULL,
 #' @export
 print.dsf <- function(x, ...) {
   cat("Destination selection function\n")
-  cat("  sigma:", deparse(x$sigma), "   theta:", deparse(x$theta), "\n")
+  cat("  sigma:", deparse(x$sigma), "   theta:", deparse(x$theta),
+      if (!is.null(x$cost)) paste("   cost:", deparse(x$cost)) else "", "\n")
   cat("  n =", x$n, "  destinations =", x$J,
       "  logLik =", round(x$logLik, 2), "  AIC =", round(x$AIC, 2),
       if (x$convergence != 0) "  [optim did not converge]" else "", "\n\n")

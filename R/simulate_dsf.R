@@ -54,9 +54,22 @@
 #' @param aRange Range parameter of the Matérn covariance, in km (the same
 #'   units as `L`), so the patch size does not change with `ncell`.
 #' @param smoothness Matérn smoothness; 0.5 is exponential.
+#' @param trap_layout `"random"` (default) places traps uniformly at random
+#'   inside the buffer; `"grid"` places them on a regular square lattice with
+#'   a small random jitter, so that a given `ntraps` is a density rather than
+#'   a draw. The lattice is `nx` by `ny` with `nx * ny = ntraps`, as close to
+#'   square as the factorisation of `ntraps` allows (a prime `ntraps` gives a
+#'   single row; choose a composite number).
 #' @param births `"traps"` places each origin at a randomly chosen trap
 #'   (the parent's capture location); `"uniform"` draws origins uniformly
 #'   inside the buffer.
+#' @param cost Optional one-sided formula naming landscape layers that define
+#'   a resistance surface (e.g. `~ cov`); requires `surface = TRUE`. With it,
+#'   dispersal uses least-cost distance with cell cost
+#'   \eqn{\exp(\alpha^\top c(x))}; see [make_cost_fun()].
+#' @param beta_cost Resistance coefficients \eqn{\alpha} for `cost`.
+#' @param cost_res Cell size for least-cost paths; the landscape is aggregated
+#'   to this resolution.
 #' @param op_mat Optional trap-by-year operational matrix (0/1), with one row
 #'   per trap and columns named by year. If `NULL`, every trap is open in
 #'   every observation year.
@@ -113,17 +126,21 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
                          prage = c(0.5, 0.3, 0.2),
                          L = 100, ncell = 1000, buffer = 10,
                          surface = FALSE, aRange = 10, smoothness = 0.5,
+                         trap_layout = c("random", "grid"),
                          births = c("traps", "uniform"),
+                         cost = NULL, beta_cost = NULL, cost_res = 1,
                          op_mat = NULL, exclude_natal = FALSE,
                          landscape_seed = NULL, design = NULL, seed = NULL) {
 
   if (!is.null(seed)) set.seed(seed)
   births <- match.arg(births)
+  trap_layout <- match.arg(trap_layout)
 
   ## ------------------------------------------------------------ design
   if (is.null(design)) {
     design <- make_design(ntraps, nyears, nborn, prage, L, ncell, buffer,
-                          surface, aRange, smoothness, births, landscape_seed)
+                          surface, aRange, smoothness, births, trap_layout,
+                          landscape_seed)
   }
   landscape <- design$landscape
   traps     <- design$traps
@@ -173,6 +190,16 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
   d2 <- outer(animals$src_x, traps$x, "-")^2 + outer(animals$src_y, traps$y, "-")^2
   avail <- t(op_mat[, yr, drop = FALSE]) > 0
   if (exclude_natal) avail[cbind(seq_len(n), apply(d2, 1, which.min))] <- FALSE
+  if (!is.null(cost)) {
+    if (!surface && is.null(design))
+      stop("cost requires a landscape surface: set surface = TRUE", call. = FALSE)
+    cf <- make_cost_fun(landscape, cost, cost_res,
+                        animals[, c("src_x", "src_y")], traps[, c("x", "y")])
+    if (length(beta_cost) != length(cf$names))
+      stop("beta_cost needs ", length(cf$names), " value(s): ",
+           paste(cf$names, collapse = ", "), call. = FALSE)
+    d2 <- cf$fun(beta_cost)                    # squared least-cost distance
+  }
   if (any(rowSums(avail) == 0))
     stop("individuals with no available destination: ",
          paste(which(rowSums(avail) == 0), collapse = ", "), call. = FALSE)
@@ -198,7 +225,8 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
 ## local scope and restored afterwards, so the design is reproducible while the
 ## caller's random stream (and hence the dispersal draw) is untouched.
 make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
-                        surface, aRange, smoothness, births, landscape_seed) {
+                        surface, aRange, smoothness, births, trap_layout,
+                        landscape_seed) {
   if (!is.null(landscape_seed)) {
     had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
     if (had_seed) old_seed <- get(".Random.seed", envir = globalenv())
@@ -228,11 +256,25 @@ make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
   landscape <- terra::rast(t(m[, ncell:1]), extent = terra::ext(0, L, 0, L), crs = "")
   names(landscape) <- "cov"
 
-  cells  <- as.data.frame(terra::crds(landscape))
-  inside <- cells$x > buffer & cells$x < L - buffer &
-            cells$y > buffer & cells$y < L - buffer
-  pick   <- sample(which(inside), ntraps)
-  traps  <- data.frame(trap_id = seq_len(ntraps), x = cells$x[pick], y = cells$y[pick])
+  if (trap_layout == "random") {
+    cells  <- as.data.frame(terra::crds(landscape))
+    inside <- cells$x > buffer & cells$x < L - buffer &
+              cells$y > buffer & cells$y < L - buffer
+    pick   <- sample(which(inside), ntraps)
+    tx <- cells$x[pick]; ty <- cells$y[pick]
+  } else {
+    ## rectangular lattice nx * ny = ntraps, as close to square as the
+    ## factorisation allows, jittered by up to 1/4 of the spacing
+    nx <- max(which(ntraps %% seq_len(floor(sqrt(ntraps))) == 0))
+    ny <- ntraps / nx
+    if (ny < nx) { tmp <- nx; nx <- ny; ny <- tmp }
+    spx <- (L - 2 * buffer) / nx; spy <- (L - 2 * buffer) / ny
+    gg  <- expand.grid(x = buffer + spx * (seq_len(nx) - 0.5),
+                       y = buffer + spy * (seq_len(ny) - 0.5))
+    tx <- gg$x + stats::runif(ntraps, -spx / 4, spx / 4)
+    ty <- gg$y + stats::runif(ntraps, -spy / 4, spy / 4)
+  }
+  traps <- data.frame(trap_id = seq_len(ntraps), x = tx, y = ty)
   traps$cov <- terra::extract(landscape, traps[, c("x", "y")])$cov
 
   if (births == "traps") {

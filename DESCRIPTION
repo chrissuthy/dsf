@@ -16,7 +16,8 @@ Roxygen: list(markdown = TRUE)
 Imports:
     stats,
     fields,
-    terra
+    terra,
+    igraph
 Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3

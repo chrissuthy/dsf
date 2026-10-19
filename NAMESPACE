@@ -7,6 +7,10 @@ importFrom(fields,
   matern.image.cov,
   sim.rf
 )
+importFrom(igraph,
+  distances,
+  make_graph
+)
 importFrom(stats,
   median,
   model.matrix,
@@ -17,8 +21,12 @@ importFrom(stats,
   terms
 )
 importFrom(terra,
+  aggregate,
+  cellFromXY,
   crds,
   ext,
   extract,
-  rast
+  rast,
+  res,
+  values
 )

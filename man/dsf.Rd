@@ -12,6 +12,9 @@ dsf(
   trap_df,
   op_mat = NULL,
   exclude_natal = FALSE,
+  cost = NULL,
+  landscape = NULL,
+  cost_res = 1,
   start = NULL,
   hessian = TRUE
 )
@@ -44,8 +47,17 @@ message.}
 its choice set. Use when origins are trap locations and an individual
 cannot be recorded at its natal trap.}
 
+\item{cost}{Optional one-sided formula naming layers of \code{landscape} that
+define the resistance surface, e.g. \code{~ cov}. \code{NULL} (default) fits the
+Euclidean model.}
+
+\item{landscape}{\code{SpatRaster} with the layers named in \code{cost}.}
+
+\item{cost_res}{Cell size for least-cost path calculations; the landscape
+is aggregated to this resolution. Coarser is faster.}
+
 \item{start}{Optional numeric vector of starting values, in the order
-\code{c(beta_sigma, beta_theta)}.}
+\code{c(beta_sigma, beta_theta, alpha)}.}
 
 \item{hessian}{Logical; compute standard errors?}
 
@@ -63,7 +75,9 @@ Names are prefixed \verb{sigma:} or \verb{theta:}.}
 \item{\code{sigma}, \code{theta}}{The formulas.}
 \item{\code{Xs}, \code{Xt}}{Design matrices.}
 \item{\code{avail}}{Logical n-by-J availability matrix used in the likelihood.}
-\item{\code{d2}}{n-by-J matrix of squared distances.}
+\item{\code{d2}}{n-by-J matrix of squared distances at the estimate.}
+\item{\code{cost_fun}}{For the non-Euclidean model, the distance calculator
+from \code{\link[=make_cost_fun]{make_cost_fun()}}; otherwise \code{NULL}.}
 \item{\code{n}, \code{J}, \code{ind_df}, \code{trap_df}, \code{optim}}{Inputs and the raw
 optimiser output.}
 }
@@ -90,6 +104,14 @@ for destination-level covariates (no intercept, since a multiplier common
 to all destinations cancels in the normalisation). Availability is defined
 by \code{op_mat}: the destinations available to individual \eqn{i} are the
 traps operational in \code{ind_df$obs_year[i]}.
+
+With \code{cost} and \code{landscape} supplied, Euclidean distance is replaced by the
+least-cost (ecological) distance through a resistance surface whose cell
+cost is \eqn{\exp(\alpha^\top c(x))}, and \eqn{\alpha} is estimated
+alongside the other parameters (coefficients named \verb{cost:}). Paths are
+computed on the landscape aggregated to \code{cost_res}; see \code{\link[=make_cost_fun]{make_cost_fun()}}.
+\eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
+likelihood-ratio test against the Euclidean fit tests the landscape effect.
 
 Parameters are estimated on the log scale with \code{\link[stats:optim]{stats::optim()}} (BFGS);
 standard errors are from the inverse numerical Hessian.

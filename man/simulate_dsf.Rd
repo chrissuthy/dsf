@@ -19,7 +19,11 @@ simulate_dsf(
   surface = FALSE,
   aRange = 10,
   smoothness = 0.5,
+  trap_layout = c("random", "grid"),
   births = c("traps", "uniform"),
+  cost = NULL,
+  beta_cost = NULL,
+  cost_res = 1,
   op_mat = NULL,
   exclude_natal = FALSE,
   landscape_seed = NULL,
@@ -69,9 +73,26 @@ units as \code{L}), so the patch size does not change with \code{ncell}.}
 
 \item{smoothness}{Matérn smoothness; 0.5 is exponential.}
 
+\item{trap_layout}{\code{"random"} (default) places traps uniformly at random
+inside the buffer; \code{"grid"} places them on a regular square lattice with
+a small random jitter, so that a given \code{ntraps} is a density rather than
+a draw. The lattice is \code{nx} by \code{ny} with \code{nx * ny = ntraps}, as close to
+square as the factorisation of \code{ntraps} allows (a prime \code{ntraps} gives a
+single row; choose a composite number).}
+
 \item{births}{\code{"traps"} places each origin at a randomly chosen trap
 (the parent's capture location); \code{"uniform"} draws origins uniformly
 inside the buffer.}
+
+\item{cost}{Optional one-sided formula naming landscape layers that define
+a resistance surface (e.g. \code{~ cov}); requires \code{surface = TRUE}. With it,
+dispersal uses least-cost distance with cell cost
+\eqn{\exp(\alpha^\top c(x))}; see \code{\link[=make_cost_fun]{make_cost_fun()}}.}
+
+\item{beta_cost}{Resistance coefficients \eqn{\alpha} for \code{cost}.}
+
+\item{cost_res}{Cell size for least-cost paths; the landscape is aggregated
+to this resolution.}
 
 \item{op_mat}{Optional trap-by-year operational matrix (0/1), with one row
 per trap and columns named by year. If \code{NULL}, every trap is open in
