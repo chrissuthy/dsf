@@ -1,0 +1,29 @@
+citHeader("To cite the dsf package in publications use:")
+
+bibentry(
+  bibtype = "Manual",
+  title   = "dsf: Destination selection functions for redistribution data",
+  author  = person("Chris", "Sutherland"),
+  year    = "2026",
+  note    = "R package version 0.1.0",
+  url     = "https://github.com/chrissuthy/dsf",
+  textVersion = paste(
+    "Sutherland, C. (2026).",
+    "dsf: Destination selection functions for redistribution data.",
+    "R package version 0.1.0. https://github.com/chrissuthy/dsf"
+  )
+)
+
+bibentry(
+  bibtype = "Article",
+  title   = "Destination selection function: a competing hazards model for redistribution data",
+  author  = person("Chris", "Sutherland"),
+  journal = "Ecology",
+  year    = "2026",
+  note    = "in preparation",
+  textVersion = paste(
+    "Sutherland, C. et al. (2026).",
+    "Destination selection function: a competing hazards model for redistribution data.",
+    "Ecology, in preparation."
+  )
+)

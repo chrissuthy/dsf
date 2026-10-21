@@ -8,13 +8,15 @@
 #' directly to [dsf()].
 #'
 #' @details
-#' Individual \eqn{i} with origin \eqn{s_i} and destination \eqn{j} has hazard
-#' \deqn{\lambda_{ij} = \exp\left(-\frac{d(s_i, v_j)^2}{2\sigma_i^2}\right)\,\theta_j}
+#' Individual \eqn{i}, observed in year \eqn{t_i}, with origin \eqn{s_i} has
+#' on destination \eqn{j} the hazard
+#' \deqn{\lambda_{ij} = \exp\left(-\frac{d(s_i, v_j)^2}{2\sigma_i^2}\right)\,\theta_{j t_i}}
 #' with \eqn{\log \sigma_i = X_i \beta_\sigma} (individual covariates, with
-#' intercept) and \eqn{\log \theta_j = Z_j \beta_\theta} (destination
-#' covariates, no intercept). The destination is a single categorical draw
-#' from the hazards normalised over the traps operational in the individual's
-#' observation year.
+#' intercept) and \eqn{\log \theta_{jt} = Z_{jt} \beta_\theta} (destination
+#' covariates, time-invariant or time-varying, no intercept). The destination
+#' is a single categorical draw from the hazards normalised over the traps
+#' operational in year \eqn{t_i}. Availability, distances and the destination
+#' design are built by [dsf_frame()], exactly as in [dsf()].
 #'
 #' The landscape covariate is a standardised Matérn Gaussian random field
 #' simulated by circulant embedding ([fields::sim.rf()]); `smoothness = 0.5`
@@ -69,6 +71,11 @@
 #'   (columns added to `trap_df`, replacing any of the same name), or a
 #'   function of `ntraps` returning either. A function is evaluated inside
 #'   the `landscape_seed` scope, so the covariate is part of the fixed design.
+#' @param trap_tv Optional time-varying destination covariates: a `J x T x p`
+#'   array over the possible observation years (`2` to `nyears + 3`, in
+#'   order) with covariate names in `dimnames[[3]]`, or a function of
+#'   `(ntraps, years)` returning one. A function is evaluated inside the
+#'   `landscape_seed` scope. See [dsf_frame()].
 #' @param births `"traps"` places each origin at a randomly chosen trap
 #'   (the parent's capture location); `"uniform"` draws origins uniformly
 #'   inside the buffer.
@@ -95,12 +102,16 @@
 #'
 #' @return A list with components
 #' \describe{
+#'   \item{`frame`}{A complete `"dsf_frame"` (with `dest`), ready for
+#'     `dsf(sigma, theta, sim$frame)`. The remaining components are the raw
+#'     field objects it was built from.}
 #'   \item{`ind_df`}{Data frame, one row per individual: `id`, `src_x`,
 #'     `src_y`, `birth_year`, `age`, `obs_year`, `age_c` (= age - 1),
 #'     `src_cov`, and the recorded destination `dest` (row index of
 #'     `trap_df`), `dest_x`, `dest_y`.}
 #'   \item{`trap_df`}{Data frame, one row per trap: `trap_id`, `x`, `y`, `cov`.}
 #'   \item{`op_mat`}{Integer matrix, traps by year, 1 if operational.}
+#'   \item{`trap_tv`}{The time-varying covariate array, or `NULL`.}
 #'   \item{`landscape`}{`SpatRaster` of the landscape covariate.}
 #'   \item{`design`}{List of `landscape`, `traps`, `animals` for reuse.}
 #' }
@@ -113,9 +124,8 @@
 #' sim <- simulate_dsf(~ age_c, ~ 0 + cov,
 #'                     beta_sigma = c(log(5), 0.3), beta_theta = 0.8,
 #'                     surface = TRUE, exclude_natal = TRUE, seed = 1)
-#' str(sim$ind_df)
-#' fit <- dsf(~ age_c, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat,
-#'            exclude_natal = TRUE)
+#' sim$frame
+#' fit <- dsf(~ age_c, ~ 0 + cov, sim$frame)
 #' fit
 #'
 #' # same design, different dispersal draw: fix the landscape seed
@@ -136,7 +146,8 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
                          L = 100, ncell = 1000, buffer = 10,
                          surface = FALSE, aRange = 10, smoothness = 0.5,
                          trap_layout = c("random", "grid"), jitter = 0,
-                         trap_cov = NULL, births = c("traps", "uniform"),
+                         trap_cov = NULL, trap_tv = NULL,
+                         births = c("traps", "uniform"),
                          cost = NULL, beta_cost = NULL, cost_res = 1,
                          op_mat = NULL, exclude_natal = FALSE,
                          landscape_seed = NULL, design = NULL, seed = NULL) {
@@ -149,11 +160,15 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
   if (is.null(design)) {
     design <- make_design(ntraps, nyears, nborn, prage, L, ncell, buffer,
                           surface, aRange, smoothness, births, trap_layout,
-                          jitter, trap_cov, landscape_seed)
+                          jitter, trap_cov, trap_tv, landscape_seed)
   }
   landscape <- design$landscape
   traps     <- design$traps
   animals   <- design$animals
+  if (!is.null(design$trap_tv)) trap_tv <- design$trap_tv
+  if (is.function(trap_tv))
+    stop("trap_tv as a function needs the design to be built in this call (drop `design`)",
+         call. = FALSE)
   n <- nrow(animals); J <- nrow(traps)
 
   ## ------------------------------------------------------------ sigma_i
@@ -163,42 +178,31 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
          paste(colnames(Xs), collapse = ", "), call. = FALSE)
   log_sigma <- drop(Xs %*% beta_sigma)
 
-  ## ------------------------------------------------------------ theta_j
-  if (is_null_formula(theta_formula)) {
-    if (!is.null(beta_theta))
-      stop("beta_theta supplied but theta_formula is ~ 1", call. = FALSE)
-    log_theta <- rep(0, J)
-  } else {
-    Xt <- stats::model.matrix(theta_formula, traps)
-    if ("(Intercept)" %in% colnames(Xt))
-      stop("theta_formula must have no intercept (not identifiable): use ~ 0 + ...",
-           call. = FALSE)
-    if (ncol(Xt) != length(beta_theta))
-      stop("beta_theta needs ", ncol(Xt), " value(s): ",
-           paste(colnames(Xt), collapse = ", "), call. = FALSE)
-    log_theta <- drop(Xt %*% beta_theta)
-  }
-  if (!is.null(traps$effort)) {
-    if (any(traps$effort <= 0)) stop("effort must be positive", call. = FALSE)
-    log_theta <- log_theta + log(traps$effort)
-  }
-
-  ## ------------------------------------------------------------ op_mat
+  ## ------------------------------------------------------------ frame
+  ## availability, distances and the long destination-year table come from
+  ## the same constructor the fitting function uses
   if (is.null(op_mat)) {
     yrs    <- sort(unique(animals$obs_year))
     op_mat <- matrix(1L, J, length(yrs), dimnames = list(NULL, as.character(yrs)))
   }
-  yr <- as.character(animals$obs_year)
-  if (nrow(op_mat) != J)
-    stop("op_mat must have one row per trap", call. = FALSE)
-  if (!all(yr %in% colnames(op_mat)))
-    stop("obs_year values missing from colnames(op_mat): ",
-         paste(setdiff(unique(yr), colnames(op_mat)), collapse = ", "), call. = FALSE)
+  frame <- dsf_frame(animals, traps, op_mat, trap_tv, exclude_natal)
+
+  ## ------------------------------------------------------------ theta_jt
+  Xt <- theta_design(theta_formula, frame)
+  if (ncol(Xt) == 0) {
+    if (!is.null(beta_theta))
+      stop("beta_theta supplied but theta_formula is ~ 1", call. = FALSE)
+    lp <- rep(0, J * frame$T)
+  } else {
+    if (ncol(Xt) != length(beta_theta))
+      stop("beta_theta needs ", ncol(Xt), " value(s): ",
+           paste(colnames(Xt), collapse = ", "), call. = FALSE)
+    lp <- drop(Xt %*% beta_theta)
+  }
+  log_theta <- theta_rows(as.vector(frame$offset) + lp, frame)   # n x J
 
   ## ------------------------------------------------------------ hazard & draw
-  d2 <- outer(animals$src_x, traps$x, "-")^2 + outer(animals$src_y, traps$y, "-")^2
-  avail <- t(op_mat[, yr, drop = FALSE]) > 0
-  if (exclude_natal) avail[cbind(seq_len(n), apply(d2, 1, which.min))] <- FALSE
+  d2 <- frame$d2
   if (!is.null(cost)) {
     if (!surface && is.null(design))
       stop("cost requires a landscape surface: set surface = TRUE", call. = FALSE)
@@ -209,13 +213,9 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
            paste(cf$names, collapse = ", "), call. = FALSE)
     d2 <- cf$fun(beta_cost)                    # squared least-cost distance
   }
-  if (any(rowSums(avail) == 0))
-    stop("individuals with no available destination: ",
-         paste(which(rowSums(avail) == 0), collapse = ", "), call. = FALSE)
 
-  log_lambda <- -d2 / (2 * exp(2 * log_sigma)) +
-                matrix(log_theta, n, J, byrow = TRUE) +
-                ifelse(avail, 0, -Inf)
+  log_lambda <- -d2 / (2 * exp(2 * log_sigma)) + log_theta +
+                ifelse(frame$avail, 0, -Inf)
   mx   <- apply(log_lambda, 1, max)
   pi   <- exp(log_lambda - mx) / rowSums(exp(log_lambda - mx))
   dest <- apply(pi, 1, function(p) sample.int(J, 1, prob = p))
@@ -226,8 +226,11 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
   ind_df$dest_x <- traps$x[dest]
   ind_df$dest_y <- traps$y[dest]
 
-  list(ind_df = ind_df, trap_df = traps, op_mat = op_mat,
-       landscape = landscape, design = design)
+  ## the complete frame (with dest) is what dsf() fits
+  frame <- dsf_frame(ind_df, traps, op_mat, trap_tv, exclude_natal)
+
+  list(frame = frame, ind_df = ind_df, trap_df = traps, op_mat = op_mat,
+       trap_tv = trap_tv, landscape = landscape, design = design)
 }
 
 ## Build landscape, traps and cohorts. With a seed, the RNG is seeded inside a
@@ -235,7 +238,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
 ## caller's random stream (and hence the dispersal draw) is untouched.
 make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
                         surface, aRange, smoothness, births, trap_layout,
-                        jitter, trap_cov, landscape_seed) {
+                        jitter, trap_cov, trap_tv, landscape_seed) {
   if (!is.null(landscape_seed)) {
     had_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
     if (had_seed) old_seed <- get(".Random.seed", envir = globalenv())
@@ -313,5 +316,13 @@ make_design <- function(ntraps, nyears, nborn, prage, L, ncell, buffer,
   animals$age_c    <- animals$age - 1
   animals$src_cov  <- terra::extract(landscape, animals[, c("src_x", "src_y")])$cov
 
-  list(landscape = landscape, traps = traps, animals = animals)
+  if (is.function(trap_tv)) {
+    years   <- sort(unique(animals$obs_year))
+    trap_tv <- trap_tv(ntraps, years)
+    dn <- dimnames(trap_tv); if (is.null(dn)) dn <- vector("list", 3)
+    if (is.null(dn[[2]])) dn[[2]] <- as.character(years)
+    dimnames(trap_tv) <- dn
+  }
+
+  list(landscape = landscape, traps = traps, animals = animals, trap_tv = trap_tv)
 }

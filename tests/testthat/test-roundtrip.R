@@ -16,7 +16,70 @@ test_that("theta intercept is refused", {
 test_that("observed destination must be available", {
   sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 100, seed = 3)
   op <- sim$op_mat; op[sim$ind_df$dest[1], as.character(sim$ind_df$obs_year[1])] <- 0L
-  expect_error(dsf(~ 1, ~ 1, sim$ind_df, sim$trap_df, op), "unavailable")
+  expect_error(dsf(~ 1, ~ 1, sim$ind_df, sim$trap_df, op), "not operational")
+})
+
+test_that("dsf_frame reproduces the direct fit and refuses year effects", {
+  sim <- simulate_dsf(~ 1, ~ 0 + cov, beta_sigma = log(5), beta_theta = 0.5,
+                      ncell = 100, trap_cov = function(n) runif(n, -2, 2), seed = 11)
+  fr <- dsf_frame(sim$ind_df, sim$trap_df, sim$op_mat)
+  expect_s3_class(fr, "dsf_frame")
+  expect_equal(nrow(fr$Z), fr$J * fr$T)
+  f1 <- dsf(~ 1, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat)
+  f2 <- dsf(~ 1, ~ 0 + cov, fr)
+  f3 <- dsf(~ 1, ~ 0 + cov, sim$frame)          # frame returned by the simulator
+  expect_equal(f1$coef, f2$coef)
+  expect_equal(f1$logLik, f2$logLik)
+  expect_equal(f1$coef, f3$coef)
+  expect_false(is.null(sim$frame$obs))
+  ## a year main effect is constant across destinations within year
+  expect_error(dsf(~ 1, ~ 0 + year, fr), "not identifiable")
+  expect_error(dsf(~ 1, ~ 0 + cov + year, fr), "not identifiable")
+})
+
+test_that("time-invariant trap_tv equals the time-invariant fit", {
+  sim <- simulate_dsf(~ 1, ~ 0 + cov, beta_sigma = log(5), beta_theta = 0.5,
+                      ncell = 100, trap_cov = function(n) runif(n, -2, 2), seed = 12)
+  yrs <- colnames(sim$op_mat)
+  tv  <- array(sim$trap_df$cov, dim = c(nrow(sim$trap_df), length(yrs), 1),
+               dimnames = list(NULL, yrs, "cov_tv"))
+  f1 <- dsf(~ 1, ~ 0 + cov,    sim$ind_df, sim$trap_df, sim$op_mat)
+  f2 <- dsf(~ 1, ~ 0 + cov_tv, sim$ind_df, sim$trap_df, sim$op_mat, trap_tv = tv)
+  expect_equal(unname(f1$coef), unname(f2$coef), tolerance = 1e-6)
+})
+
+test_that("a time-varying destination covariate is simulated and recovered", {
+  skip_on_cran()
+  tvf <- function(J, years) {
+    a <- array(runif(J * length(years), -2, 2), dim = c(J, length(years), 1),
+               dimnames = list(NULL, as.character(years), "bait"))
+    a
+  }
+  sim <- simulate_dsf(~ 1, ~ 0 + bait, beta_sigma = log(5), beta_theta = 0.7,
+                      ncell = 100, trap_tv = tvf, exclude_natal = TRUE, seed = 13)
+  expect_equal(dim(sim$trap_tv)[3], 1L)
+  fit <- dsf(~ 1, ~ 0 + bait, sim$ind_df, sim$trap_df, sim$op_mat,
+             trap_tv = sim$trap_tv, exclude_natal = TRUE)
+  expect_equal(fit$convergence, 0)
+  expect_true(abs(fit$coef["theta:bait"] - 0.7) < 3 * fit$se["theta:bait"])
+  expect_true(abs(fit$coef["sigma:(Intercept)"] - log(5)) < 3 * fit$se["sigma:(Intercept)"])
+  ## long-format trap_tv gives the same frame
+  long <- data.frame(trap = rep(seq_len(dim(sim$trap_tv)[1]), times = dim(sim$trap_tv)[2]),
+                     year = rep(dimnames(sim$trap_tv)[[2]], each = dim(sim$trap_tv)[1]),
+                     bait = as.vector(sim$trap_tv[, , "bait"]))
+  fr_long <- dsf_frame(sim$ind_df, sim$trap_df, sim$op_mat, trap_tv = long, exclude_natal = TRUE)
+  expect_equal(fr_long$Z$bait, fit$frame$Z$bait)
+})
+
+test_that("time-varying effort enters as an offset", {
+  sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 100, seed = 14)
+  yrs <- colnames(sim$op_mat); J <- nrow(sim$trap_df)
+  eff <- array(exp(rnorm(J * length(yrs))), dim = c(J, length(yrs), 1),
+               dimnames = list(NULL, yrs, "effort"))
+  fr <- dsf_frame(sim$ind_df, sim$trap_df, sim$op_mat, trap_tv = eff)
+  expect_equal(fr$offset[, 1], log(eff[, 1, "effort"]))
+  eff[1, 1, "effort"] <- -1
+  expect_error(dsf_frame(sim$ind_df, sim$trap_df, sim$op_mat, trap_tv = eff), "positive")
 })
 
 test_that("landscape_seed fixes the design but not the dispersal draw", {

@@ -22,6 +22,7 @@ simulate_dsf(
   trap_layout = c("random", "grid"),
   jitter = 0,
   trap_cov = NULL,
+  trap_tv = NULL,
   births = c("traps", "uniform"),
   cost = NULL,
   beta_cost = NULL,
@@ -93,6 +94,12 @@ value per trap, stored as \code{cov}), a data frame with one row per trap
 function of \code{ntraps} returning either. A function is evaluated inside
 the \code{landscape_seed} scope, so the covariate is part of the fixed design.}
 
+\item{trap_tv}{Optional time-varying destination covariates: a \verb{J x T x p}
+array over the possible observation years (\code{2} to \code{nyears + 3}, in
+order) with covariate names in \code{dimnames[[3]]}, or a function of
+\verb{(ntraps, years)} returning one. A function is evaluated inside the
+\code{landscape_seed} scope. See \code{\link[=dsf_frame]{dsf_frame()}}.}
+
 \item{births}{\code{"traps"} places each origin at a randomly chosen trap
 (the parent's capture location); \code{"uniform"} draws origins uniformly
 inside the buffer.}
@@ -128,12 +135,16 @@ previous call, returned as \verb{$design}; overrides \code{landscape_seed}.}
 \value{
 A list with components
 \describe{
+\item{\code{frame}}{A complete \code{"dsf_frame"} (with \code{dest}), ready for
+\code{dsf(sigma, theta, sim$frame)}. The remaining components are the raw
+field objects it was built from.}
 \item{\code{ind_df}}{Data frame, one row per individual: \code{id}, \code{src_x},
 \code{src_y}, \code{birth_year}, \code{age}, \code{obs_year}, \code{age_c} (= age - 1),
 \code{src_cov}, and the recorded destination \code{dest} (row index of
 \code{trap_df}), \code{dest_x}, \code{dest_y}.}
 \item{\code{trap_df}}{Data frame, one row per trap: \code{trap_id}, \code{x}, \code{y}, \code{cov}.}
 \item{\code{op_mat}}{Integer matrix, traps by year, 1 if operational.}
+\item{\code{trap_tv}}{The time-varying covariate array, or \code{NULL}.}
 \item{\code{landscape}}{\code{SpatRaster} of the landscape covariate.}
 \item{\code{design}}{List of \code{landscape}, \code{traps}, \code{animals} for reuse.}
 }
@@ -147,13 +158,15 @@ trap-by-year operational matrix), so that its output can be passed
 directly to \code{\link[=dsf]{dsf()}}.
 }
 \details{
-Individual \eqn{i} with origin \eqn{s_i} and destination \eqn{j} has hazard
-\deqn{\lambda_{ij} = \exp\left(-\frac{d(s_i, v_j)^2}{2\sigma_i^2}\right)\,\theta_j}
+Individual \eqn{i}, observed in year \eqn{t_i}, with origin \eqn{s_i} has
+on destination \eqn{j} the hazard
+\deqn{\lambda_{ij} = \exp\left(-\frac{d(s_i, v_j)^2}{2\sigma_i^2}\right)\,\theta_{j t_i}}
 with \eqn{\log \sigma_i = X_i \beta_\sigma} (individual covariates, with
-intercept) and \eqn{\log \theta_j = Z_j \beta_\theta} (destination
-covariates, no intercept). The destination is a single categorical draw
-from the hazards normalised over the traps operational in the individual's
-observation year.
+intercept) and \eqn{\log \theta_{jt} = Z_{jt} \beta_\theta} (destination
+covariates, time-invariant or time-varying, no intercept). The destination
+is a single categorical draw from the hazards normalised over the traps
+operational in year \eqn{t_i}. Availability, distances and the destination
+design are built by \code{\link[=dsf_frame]{dsf_frame()}}, exactly as in \code{\link[=dsf]{dsf()}}.
 
 The landscape covariate is a standardised Matérn Gaussian random field
 simulated by circulant embedding (\code{\link[fields:sim.rf]{fields::sim.rf()}}); \code{smoothness = 0.5}
@@ -172,9 +185,8 @@ design vary as well, leave \code{landscape_seed = NULL}.
 sim <- simulate_dsf(~ age_c, ~ 0 + cov,
                     beta_sigma = c(log(5), 0.3), beta_theta = 0.8,
                     surface = TRUE, exclude_natal = TRUE, seed = 1)
-str(sim$ind_df)
-fit <- dsf(~ age_c, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat,
-           exclude_natal = TRUE)
+sim$frame
+fit <- dsf(~ age_c, ~ 0 + cov, sim$frame)
 fit
 
 # same design, different dispersal draw: fix the landscape seed

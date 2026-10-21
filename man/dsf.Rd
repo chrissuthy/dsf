@@ -8,9 +8,10 @@
 dsf(
   sigma = ~1,
   theta = ~1,
-  ind_df,
-  trap_df,
+  data,
+  trap_df = NULL,
   op_mat = NULL,
+  trap_tv = NULL,
   exclude_natal = FALSE,
   cost = NULL,
   landscape = NULL,
@@ -23,29 +24,18 @@ dsf(
 }
 \arguments{
 \item{sigma}{One-sided formula for \eqn{\log \sigma_i}; terms refer to
-columns of \code{ind_df}. Default \code{~ 1}.}
+columns of the individual table. Default \code{~ 1}.}
 
-\item{theta}{One-sided formula for \eqn{\log \theta_j}; terms refer to
-columns of \code{trap_df}. Must have no intercept (\code{~ 0 + ...}). Default
-\code{~ 1}.}
+\item{theta}{One-sided formula for \eqn{\log \theta_{jt}}; terms refer to
+columns of the destination table and of \code{trap_tv}. Must have no
+intercept (\code{~ 0 + ...}). Default \code{~ 1}.}
 
-\item{ind_df}{Data frame with one row per redistribution event. Required
-columns: \code{src_x}, \code{src_y} (origin coordinates), \code{dest} (integer row
-index of the destination in \code{trap_df}); \code{obs_year} if \code{op_mat} is
-supplied; plus any covariates named in \code{sigma}.}
+\item{data}{A \code{"dsf_frame"} from \code{\link[=dsf_frame]{dsf_frame()}}, or the individual data
+frame (then \code{trap_df}, \code{op_mat}, \code{trap_tv} and \code{exclude_natal} are
+passed to \code{\link[=dsf_frame]{dsf_frame()}}).}
 
-\item{trap_df}{Data frame with one row per candidate destination. Required
-columns: \code{x}, \code{y}; optional \code{effort} (positive, used as an offset on
-\eqn{\log \theta_j}); plus any covariates named in \code{theta}.}
-
-\item{op_mat}{Optional matrix of traps by year (rows in \code{trap_df} order,
-columns named by year), positive where the trap was operational. If
-\code{NULL}, every destination is available to every individual, with a
-message.}
-
-\item{exclude_natal}{Logical; remove each individual's nearest trap from
-its choice set. Use when origins are trap locations and an individual
-cannot be recorded at its natal trap.}
+\item{trap_df, op_mat, trap_tv, exclude_natal}{Passed to \code{\link[=dsf_frame]{dsf_frame()}} when
+\code{data} is a data frame; ignored when it is a frame.}
 
 \item{cost}{Optional one-sided formula naming layers of \code{landscape} that
 define the resistance surface, e.g. \code{~ cov}. \code{NULL} (default) fits the
@@ -69,17 +59,17 @@ is aggregated to this resolution. Coarser is faster.}
 An object of class \code{"dsf"}: a list with
 \describe{
 \item{\code{coef}, \code{se}}{Named estimates and standard errors on the log scale.
-Names are prefixed \verb{sigma:} or \verb{theta:}.}
+Names are prefixed \verb{sigma:}, \verb{theta:} or \verb{cost:}.}
 \item{\code{logLik}, \code{AIC}, \code{npar}, \code{convergence}}{Fit summaries;
 \code{convergence} is the \code{\link[stats:optim]{stats::optim()}} code (0 = success).}
-\item{\code{sigma}, \code{theta}}{The formulas.}
-\item{\code{Xs}, \code{Xt}}{Design matrices.}
-\item{\code{avail}}{Logical n-by-J availability matrix used in the likelihood.}
+\item{\code{sigma}, \code{theta}, \code{cost}}{The formulas.}
+\item{\code{Xs}, \code{Xt}}{Design matrices (\code{Xt} has one row per
+destination-year).}
+\item{\code{frame}}{The \code{"dsf_frame"} the model was fitted to.}
 \item{\code{d2}}{n-by-J matrix of squared distances at the estimate.}
 \item{\code{cost_fun}}{For the non-Euclidean model, the distance calculator
 from \code{\link[=make_cost_fun]{make_cost_fun()}}; otherwise \code{NULL}.}
-\item{\code{n}, \code{J}, \code{ind_df}, \code{trap_df}, \code{optim}}{Inputs and the raw
-optimiser output.}
+\item{\code{n}, \code{J}, \code{optim}}{Sizes and the raw optimiser output.}
 }
 }
 \description{
@@ -88,22 +78,23 @@ redistribution data in which each individual's origin, its destination,
 and the full set of candidate destinations are known.
 }
 \details{
-Individual \eqn{i} with origin \eqn{s_i} exerts, on each candidate
-destination \eqn{j}, the hazard
-\deqn{\lambda_{ij} = \exp\left(-\frac{d(s_i, v_j)^2}{2\sigma_i^2}\right)\,\theta_j}
+Individual \eqn{i}, observed in year \eqn{t_i}, exerts on each candidate
+destination \eqn{j} the hazard
+\deqn{\lambda_{ij} = \exp\left(-\frac{d(s_i, v_j)^2}{2\sigma_i^2}\right)\,\theta_{j t_i}}
 and the destination at which it is observed is a categorical draw with
 probabilities \eqn{\pi_{ij} = \lambda_{ij} / \sum_k \lambda_{ik}}, the sum
-running over the destinations available to individual \eqn{i}. The
+running over the destinations operational in year \eqn{t_i}. The
 log-likelihood is \eqn{\sum_i \log \pi_{i, e_i}} where \eqn{e_i} is the
 observed destination.
 
 Covariates enter through two linear predictors:
 \eqn{\log \sigma_i = X_i \beta_\sigma} for individual-level covariates
-(with intercept) and \eqn{\log \theta_j = Z_j \beta_\theta + \log(\mathrm{effort}_j)}
-for destination-level covariates (no intercept, since a multiplier common
-to all destinations cancels in the normalisation). Availability is defined
-by \code{op_mat}: the destinations available to individual \eqn{i} are the
-traps operational in \code{ind_df$obs_year[i]}.
+(with intercept) and
+\eqn{\log \theta_{jt} = Z_{jt} \beta_\theta + \log(\mathrm{effort}_{jt})}
+for destination-level covariates, which may vary by year. Because the
+normalisation is within individual and each individual belongs to one
+year, a term constant across destinations within a year (an intercept, a
+year effect) cancels and is refused.
 
 With \code{cost} and \code{landscape} supplied, Euclidean distance is replaced by the
 least-cost (ecological) distance through a resistance surface whose cell
@@ -130,9 +121,13 @@ f0 <- dsf(~ 1,     ~ 1,       sim$ind_df, sim$trap_df, sim$op_mat, exclude_natal
 f1 <- dsf(~ age_c, ~ 0 + cov, sim$ind_df, sim$trap_df, sim$op_mat, exclude_natal = TRUE)
 f1
 2 * (f1$logLik - f0$logLik)   # likelihood-ratio statistic, 2 df
+
+# the same through a frame
+fr <- dsf_frame(sim$ind_df, sim$trap_df, sim$op_mat, exclude_natal = TRUE)
+dsf(~ age_c, ~ 0 + cov, fr)
 }
 
 }
 \seealso{
-\code{\link[=simulate_dsf]{simulate_dsf()}} to generate data of the required form.
+\code{\link[=dsf_frame]{dsf_frame()}}, \code{\link[=simulate_dsf]{simulate_dsf()}}
 }
