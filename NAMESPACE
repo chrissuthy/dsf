@@ -27,6 +27,7 @@ importFrom(terra,
   crds,
   ext,
   extract,
+  ncell,
   rast,
   res,
   values

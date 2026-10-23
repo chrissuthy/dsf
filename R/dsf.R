@@ -29,8 +29,12 @@
 #' alongside the other parameters (coefficients named `cost:`). The raster is
 #' used at the resolution supplied and must cover all origins and
 #' destinations with no missing cells; see [make_cost_fun()].
-#' \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
-#' likelihood-ratio test against the Euclidean fit tests the landscape effect.
+#' \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance. Because
+#' lattice paths are slightly longer than straight lines, the like-for-like
+#' null for a resistance model is not the Euclidean fit but the same grid
+#' with a flat surface: `cost = ~ 1` fixes every cell cost at 1, estimates no
+#' resistance parameters, and the likelihood-ratio test between the two then
+#' isolates the landscape effect.
 #' By default the cost covariates are standardised over the raster cells
 #' (`standardise_cost = TRUE`) so that \eqn{\exp(\alpha^\top c)} stays well
 #' behaved during optimisation; `cost:` coefficients are then per SD of the
@@ -51,7 +55,8 @@
 #'   `data` is a data frame; ignored when it is a frame.
 #' @param cost Optional one-sided formula naming layers of `landscape` that
 #'   define the resistance surface, e.g. `~ cov`. `NULL` (default) fits the
-#'   Euclidean model.
+#'   Euclidean model; `~ 1` fits grid-path distance on a flat surface (the
+#'   null for a resistance model).
 #' @param landscape `SpatRaster` with the layers named in `cost`, prepared by
 #'   the user: complete (no `NA`), covering every origin and destination with
 #'   a buffer, and coarse enough that repeated least-cost calculations are
@@ -129,6 +134,9 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
                               fr$ind[, c("src_x", "src_y")], fr$traps[, c("x", "y")],
                               standardise = standardise_cost)
     k <- length(cost_fun$names)
+    ## a flat surface (cost = ~ 1) has no free parameters: grid-path
+    ## distances are fixed, so compute them once
+    if (k == 0) d2 <- cost_fun$fun(numeric(0))
   }
   mask <- ifelse(fr$avail, 0, -Inf)
   obs  <- fr$obs

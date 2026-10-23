@@ -14,6 +14,13 @@
 #' \eqn{\alpha = 0} every cell has cost 1 and the result approximates
 #' Euclidean distance on the grid.
 #'
+#' The result is identical (to floating-point precision) to
+#' `gdistance::costDistance()` on a transition layer built with conductance
+#' `1 / mean(cost)` over 8 directions and `geoCorrection(type = "c")`; the
+#' difference is that the adjacency is built once here and only the edge
+#' weights are recomputed when \eqn{\alpha} changes, which matters because
+#' the surface changes at every likelihood evaluation.
+#'
 #' The raster is used at the resolution supplied. It is the user's
 #' responsibility to prepare it: it must contain every origin and
 #' destination, ideally with a buffer of about two dispersal scales beyond
@@ -26,7 +33,10 @@
 #' @param landscape A `SpatRaster` with one layer per cost covariate.
 #' @param cost One-sided formula naming the layers, e.g. `~ cov`. No intercept
 #'   is used: a constant multiplier on all costs rescales every distance by
-#'   the same factor and is absorbed by \eqn{\sigma}.
+#'   the same factor and is absorbed by \eqn{\sigma}. `~ 1` gives a flat
+#'   surface (every cell cost 1, no resistance parameters): grid-path
+#'   distance on the same lattice, the like-for-like null for a resistance
+#'   model.
 #' @param src Two-column matrix or data frame of origin coordinates.
 #' @param dst Two-column matrix or data frame of destination coordinates.
 #' @param standardise Logical; centre and scale each cost covariate (mean 0,
@@ -42,7 +52,7 @@
 #'   frame of the mean and SD applied to each covariate (all 0 and 1 if
 #'   `standardise = FALSE`).
 #'
-#' @importFrom terra res cellFromXY values ext
+#' @importFrom terra res cellFromXY values ext ncell
 #' @importFrom igraph make_graph distances
 #' @importFrom stats sd
 #' @keywords internal
@@ -74,7 +84,9 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
          ".", call. = FALSE)
   }
 
-  cell_df <- as.data.frame(terra::values(r[[vars]]))
+  ncells  <- terra::ncell(r)
+  cell_df <- if (length(vars)) as.data.frame(terra::values(r[[vars]])) else
+    data.frame(row.names = seq_len(ncells))
   for (v in vars) {
     nbad <- sum(!is.finite(cell_df[[v]]))
     if (nbad > 0)
@@ -84,8 +96,8 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
   }
 
   ## ------------------------------------------------------------ standardise
-  scale_df <- data.frame(var = vars, mean = 0, sd = 1)
-  if (standardise) {
+  scale_df <- data.frame(var = vars, mean = rep(0, length(vars)), sd = rep(1, length(vars)))
+  if (standardise && length(vars)) {
     for (i in seq_along(vars)) {
       v <- vars[i]; m <- mean(cell_df[[v]]); s <- stats::sd(cell_df[[v]])
       if (!is.finite(s) || s == 0) stop("cost covariate '", v, "' is constant", call. = FALSE)
@@ -97,7 +109,8 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
                    signif(scale_df$sd, 3), ")", collapse = "; "),
             "; cost coefficients are per SD")
   }
-  Xc <- stats::model.matrix(stats::update(cost, ~ . + 0), cell_df)
+  Xc <- if (length(vars)) stats::model.matrix(stats::update(cost, ~ . + 0), cell_df) else
+    matrix(0, ncells, 0)                       # flat surface: cost = ~ 1
 
   ## ------------------------------------------------------------ graph
   ## 8-neighbour edge list on the grid (cell ids are row-major in terra)
@@ -117,11 +130,14 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
   usrc <- sort(unique(src_cell)); spos <- match(src_cell, usrc)
   udst <- sort(unique(dst_cell)); dpos <- match(dst_cell, udst)
 
-  fun <- function(alpha) {
+  fun <- function(alpha = numeric(0)) {
+    if (length(alpha) != ncol(Xc))
+      stop("alpha must have length ", ncol(Xc), call. = FALSE)
     if (any(!is.finite(alpha))) stop("non-finite resistance parameter", call. = FALSE)
     ## cap the linear predictor so exp() cannot overflow to Inf (which would
     ## give NaN edge weights); costs above exp(50) are effectively barriers
-    cell_cost <- exp(pmin(drop(Xc %*% alpha), 50))
+    lp <- if (ncol(Xc)) drop(Xc %*% alpha) else rep(0, ncells)
+    cell_cost <- exp(pmin(lp, 50))
     w <- 0.5 * (cell_cost[from] + cell_cost[to]) * len
     D <- igraph::distances(g, v = usrc, to = udst, weights = w)
     D[spos, dpos, drop = FALSE]^2

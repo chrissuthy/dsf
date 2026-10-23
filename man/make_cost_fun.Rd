@@ -11,7 +11,10 @@ make_cost_fun(landscape, cost, src, dst, standardise = TRUE)
 
 \item{cost}{One-sided formula naming the layers, e.g. \code{~ cov}. No intercept
 is used: a constant multiplier on all costs rescales every distance by
-the same factor and is absorbed by \eqn{\sigma}.}
+the same factor and is absorbed by \eqn{\sigma}. \code{~ 1} gives a flat
+surface (every cell cost 1, no resistance parameters): grid-path
+distance on the same lattice, the like-for-like null for a resistance
+model.}
 
 \item{src}{Two-column matrix or data frame of origin coordinates.}
 
@@ -45,6 +48,13 @@ times the Euclidean step length, and the ecological distance is the
 least-cost path length over the graph (\code{\link[igraph:distances]{igraph::distances()}}). With
 \eqn{\alpha = 0} every cell has cost 1 and the result approximates
 Euclidean distance on the grid.
+
+The result is identical (to floating-point precision) to
+\code{gdistance::costDistance()} on a transition layer built with conductance
+\code{1 / mean(cost)} over 8 directions and \code{geoCorrection(type = "c")}; the
+difference is that the adjacency is built once here and only the edge
+weights are recomputed when \eqn{\alpha} changes, which matters because
+the surface changes at every likelihood evaluation.
 
 The raster is used at the resolution supplied. It is the user's
 responsibility to prepare it: it must contain every origin and

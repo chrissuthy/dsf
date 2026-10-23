@@ -119,6 +119,21 @@ test_that("alpha = 0 cost distance approximates Euclidean", {
   expect_true(all(ratio > 0.9 & ratio < 1.15))
 })
 
+test_that("cost = ~ 1 is the flat-surface null nested in the resistance model", {
+  skip_if_not_installed("igraph")
+  sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 50, surface = TRUE,
+                      cost = ~ cov, beta_cost = 1, seed = 16)
+  f_flat <- dsf(~ 1, ~ 1, sim$frame, cost = ~ 1,   landscape = sim$landscape)
+  f_cost <- dsf(~ 1, ~ 1, sim$frame, cost = ~ cov, landscape = sim$landscape)
+  expect_equal(f_flat$npar, 1)
+  expect_equal(f_cost$npar, 2)
+  expect_true(f_cost$logLik >= f_flat$logLik)      # nested
+  ## flat-surface distances equal alpha = 0 distances on the same grid
+  cf <- make_cost_fun(sim$landscape, ~ cov,
+                      sim$ind_df[, c("src_x", "src_y")], sim$trap_df[, c("x", "y")])
+  expect_equal(f_flat$d2, cf$fun(0))
+})
+
 test_that("cost raster must contain all points and have no NA", {
   skip_if_not_installed("igraph")
   sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 50, surface = TRUE, seed = 15)

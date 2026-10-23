@@ -77,7 +77,7 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
   time-varying ones; `landscape_seed` fixes the design across replicates
   (functions for `trap_cov`/`trap_tv` are evaluated inside its scope);
   `exclude_natal`; `cost = ~ cov` with `beta_cost` (raster used as supplied).
-- Tests: `tests/testthat/test-roundtrip.R` (14).
+- Tests: `tests/testthat/test-roundtrip.R` (15).
 - Citation: `inst/CITATION`.
 - Workflow after an edit: Document → Test → Install → commit → push.
 
@@ -90,7 +90,8 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
 | `sim02_age.R` | Paper Sim 2.1: age covariate on σ (γ₀ = log 5, γ₁ = 0.3); null vs age DSF; n = 50 and 500 |
 | `sim03_theta.R` | Paper Sim 2.2: z_j ~ U(−2, 2) on θ, β = 0.5; null vs hazard DSF; n = 50 and 500 |
 | `sim04_noneuc.R` | Paper Sim 2.3: resistance surface exp(α c(x)), α = 1, 200 × 200 raster (500 m), exponential GRF range 10 km; Euclidean vs non-Euclidean DSF; 50 reps (parallel over replicates) |
-| `mink_dsf.R` | Case study: American mink, eastern England, 2024; Euclidean vs non-Euclidean (distance to water); raster prepared in the script (km units, NA outside counties → max distance, aggregated to 1 km) |
+| `mink_dsf.R` | Case study: American mink, eastern England, 2024; Euclidean (reference), flat-surface and non-Euclidean (distance to water); raster prepared in the script (km units, NA outside counties → max distance, aggregated to 1 km) |
+| `mink_kernel_map.R` | Figure 4: distance-to-water, flat-surface kernel and resistance kernel from one origin, plus trap-level π_j |
 | `sim01_null.R`, `sim05_naive.R` | earlier null and trap-count studies; superseded by sim00/sim02 |
 
 Shared Sim 2 design: 100 × 100 km, 250 random traps fixed across years and
@@ -136,6 +137,21 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
 - Non-Euclidean fits: ~1.5 min (n = 50) to ~10 min (n = 500) on a 40 000-node
   graph; parallelise over replicates with `parallel::parLapply`, seeding per
   replicate.
+- Why not `gdistance::costDistance()`: same algorithm (igraph Dijkstra on the
+  8-neighbour lattice; our edge weight mean(cost) × step length equals the
+  conductance `1/mean(cost)` + `geoCorrection(type = "c")` recipe), but
+  `transition()` rebuilds the adjacency and applies the transition function
+  over every cell pair, and the cost surface changes at every likelihood
+  evaluation. We build the adjacency once and recompute only the weight
+  vector per evaluation. Also avoids the superseded raster/sp stack.
+  Methods can say "equivalent to gdistance::costDistance with conductance
+  1/mean(cost) and geocorrection".
+- Flat-surface null (`cost = ~ 1`): grid-path distance with every cell cost
+  1, no resistance parameters, computed once. The like-for-like null for a
+  resistance model (lattice paths are up to ~8% longer than straight lines,
+  so Euclidean vs resistance confounds lattice and landscape). Sim 2.3 and
+  the mink case study report resistance vs flat; the Euclidean fit is kept
+  as a reference row.
 - Overflow: exp(α·c) with raw-unit covariates (e.g. distance to water in km
   over a large raster) overflowed to Inf → igraph "Weights must not contain
   NaN". Fixed by standardising covariates, capping the predictor, and the
@@ -160,4 +176,7 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
   cost covariates under the hood. Raster preprocessing (aggregation, NA
   filling) moved out of the package into the case-study script:
   `make_cost_fun()` now checks containment and completeness and errors
-  informatively; `cost_res` removed; 14 tests.
+  informatively; `cost_res` removed. Flat-surface null `cost = ~ 1` added
+  (15 tests); `mink_kernel_map.R` (Figure 4: covariate, flat-surface and
+  resistance kernels from one origin). gdistance considered and rejected
+  (transition layer would be rebuilt every evaluation).

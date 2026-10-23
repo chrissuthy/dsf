@@ -39,7 +39,8 @@ passed to \code{\link[=dsf_frame]{dsf_frame()}}).}
 
 \item{cost}{Optional one-sided formula naming layers of \code{landscape} that
 define the resistance surface, e.g. \code{~ cov}. \code{NULL} (default) fits the
-Euclidean model.}
+Euclidean model; \code{~ 1} fits grid-path distance on a flat surface (the
+null for a resistance model).}
 
 \item{landscape}{\code{SpatRaster} with the layers named in \code{cost}, prepared by
 the user: complete (no \code{NA}), covering every origin and destination with
@@ -105,8 +106,12 @@ cost is \eqn{\exp(\alpha^\top c(x))}, and \eqn{\alpha} is estimated
 alongside the other parameters (coefficients named \verb{cost:}). The raster is
 used at the resolution supplied and must cover all origins and
 destinations with no missing cells; see \code{\link[=make_cost_fun]{make_cost_fun()}}.
-\eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
-likelihood-ratio test against the Euclidean fit tests the landscape effect.
+\eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance. Because
+lattice paths are slightly longer than straight lines, the like-for-like
+null for a resistance model is not the Euclidean fit but the same grid
+with a flat surface: \code{cost = ~ 1} fixes every cell cost at 1, estimates no
+resistance parameters, and the likelihood-ratio test between the two then
+isolates the landscape effect.
 By default the cost covariates are standardised over the raster cells
 (\code{standardise_cost = TRUE}) so that \eqn{\exp(\alpha^\top c)} stays well
 behaved during optimisation; \verb{cost:} coefficients are then per SD of the
