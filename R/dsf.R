@@ -63,6 +63,15 @@
 #'   affordable (aggregate with [terra::aggregate()] beforehand if needed).
 #' @param standardise_cost Logical; standardise the cost covariates before
 #'   building the resistance surface (see [make_cost_fun()]). Default `TRUE`.
+#' @param na_barrier Logical; treat missing raster cells as impassable
+#'   (see [make_cost_fun()]). Default `FALSE`, which makes missing cells an
+#'   error.
+#' @param window Optional focal-window radius (map units) for the least-cost
+#'   calculation: destinations farther than this from an origin get zero
+#'   hazard and each origin's Dijkstra runs on a local subgraph (see
+#'   [make_cost_fun()]). Use several dispersal scales. The same truncated
+#'   choice set applies to `cost = ~ 1`, so flat and resistance fits remain
+#'   comparable; the Euclidean fit (`cost = NULL`) is not truncated.
 #' @param start Optional numeric vector of starting values, in the order
 #'   `c(beta_sigma, beta_theta, alpha)`.
 #' @param hessian Logical; compute standard errors?
@@ -105,7 +114,7 @@
 dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
                 trap_tv = NULL, exclude_natal = FALSE,
                 cost = NULL, landscape = NULL, standardise_cost = TRUE,
-                start = NULL, hessian = TRUE) {
+                na_barrier = FALSE, window = NULL, start = NULL, hessian = TRUE) {
 
   ## ------------------------------------------------------------ frame
   if (inherits(data, "dsf_frame")) {
@@ -132,8 +141,15 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
     if (is.null(landscape)) stop("landscape is required when cost is supplied", call. = FALSE)
     cost_fun <- make_cost_fun(landscape, cost,
                               fr$ind[, c("src_x", "src_y")], fr$traps[, c("x", "y")],
-                              standardise = standardise_cost)
+                              standardise = standardise_cost, na_barrier = na_barrier,
+                              window = window)
     k <- length(cost_fun$names)
+    if (!is.null(window)) {
+      beyond <- !cost_fun$in_window[fr$obs]
+      if (any(beyond))
+        stop(sum(beyond), " observed destination(s) lie beyond window = ", window,
+             " from their origin; increase window.", call. = FALSE)
+    }
     ## a flat surface (cost = ~ 1) has no free parameters: grid-path
     ## distances are fixed, so compute them once
     if (k == 0) d2 <- cost_fun$fun(numeric(0))

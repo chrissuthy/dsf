@@ -4,7 +4,15 @@
 \alias{make_cost_fun}
 \title{Build a least-cost distance calculator from a landscape raster}
 \usage{
-make_cost_fun(landscape, cost, src, dst, standardise = TRUE)
+make_cost_fun(
+  landscape,
+  cost,
+  src,
+  dst,
+  standardise = TRUE,
+  na_barrier = FALSE,
+  window = NULL
+)
 }
 \arguments{
 \item{landscape}{A \code{SpatRaster} with one layer per cost covariate.}
@@ -26,13 +34,29 @@ Default \code{TRUE}. This keeps \eqn{\exp(\alpha^\top c)} well behaved during
 optimisation and makes \eqn{\alpha} an effect per SD of the covariate;
 the means and SDs used are returned in \code{scale} so that \eqn{\alpha} can
 be converted to raw units (\code{alpha / sd}). A message reports the scaling.}
+
+\item{na_barrier}{Logical; treat missing cells as impassable rather than
+as an error? Default \code{FALSE}. A cell is missing if any cost covariate
+is \code{NA} there (for \code{cost = ~ 1}, the first layer of \code{landscape} is
+used).}
+
+\item{window}{Optional focal-window radius in map units. For each origin,
+only destinations within \code{window} (Euclidean) receive a finite distance;
+the rest are \code{Inf} (zero hazard), and the least-cost calculation runs on
+the subgraph of a box of half-width \code{1.25 * window} around the origin,
+built once. This cuts the per-evaluation cost from (origins × whole
+raster) to (origins × box). Choose \code{window} as several dispersal scales
+(4–5 σ) so that the dropped tail mass is negligible; \code{\link[=dsf]{dsf()}} refuses a
+window that excludes any observed destination. \code{NULL} (default)
+computes every origin to every destination on the whole raster.}
 }
 \value{
 A list with \code{fun(alpha)}, returning the n-by-J matrix of squared
-least-cost distances for resistance vector \code{alpha}; \code{names}, the cost
-covariate names; \code{raster}, the \code{SpatRaster} used; and \code{scale}, a data
-frame of the mean and SD applied to each covariate (all 0 and 1 if
-\code{standardise = FALSE}).
+least-cost distances for resistance vector \code{alpha} (\code{Inf} beyond the
+window); \code{names}, the cost covariate names; \code{raster}, the \code{SpatRaster}
+used; \code{scale}, a data frame of the mean and SD applied to each covariate
+(all 0 and 1 if \code{standardise = FALSE}); \code{window}; and \code{in_window}, the
+n-by-J logical matrix of pairs with finite distance.
 }
 \description{
 Builds the 8-neighbour graph of a resistance raster once and returns a
@@ -60,9 +84,14 @@ The raster is used at the resolution supplied. It is the user's
 responsibility to prepare it: it must contain every origin and
 destination, ideally with a buffer of about two dispersal scales beyond
 them so that least-cost paths are not forced along the raster edge; it
-must have no missing cells; and it should be coarse enough that Dijkstra
-from every origin at every likelihood evaluation is affordable (use
-\code{\link[terra:aggregate]{terra::aggregate()}} beforehand). These conditions are checked and an
-informative error is raised if they fail.
+should be coarse enough that Dijkstra from every origin at every
+likelihood evaluation is affordable (use \code{\link[terra:aggregate]{terra::aggregate()}}
+beforehand); and missing cells are either an error (default) or, with
+\code{na_barrier = TRUE}, impassable: they are removed from the graph, so
+paths go around them under every model (including the flat surface) and
+an origin and destination that are not connected through non-missing
+cells raise an error. Use this for sea, lakes or any region movement
+cannot cross; it is not a substitute for extending a covariate beyond the
+study boundary.
 }
 \keyword{internal}

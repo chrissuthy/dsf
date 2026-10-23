@@ -143,6 +143,50 @@ test_that("cost raster must contain all points and have no NA", {
   expect_error(dsf(~ 1, ~ 1, sim$frame, cost = ~ cov, landscape = holey), "missing values")
 })
 
+test_that("na_barrier = TRUE makes missing cells impassable", {
+  skip_if_not_installed("igraph")
+  r <- terra::rast(nrows = 20, ncols = 20, xmin = 0, xmax = 20, ymin = 0, ymax = 20)
+  terra::values(r) <- 0; names(r) <- "cov"
+  ## a wall across the middle with a gap at the top: paths must detour
+  wall <- r; wall[terra::cellFromRowCol(wall, 2:20, 10)] <- NA
+  src <- cbind(5, 10); dst <- cbind(15, 10)
+  cf_open <- make_cost_fun(r,    ~ cov, src, dst, standardise = FALSE)
+  cf_wall <- make_cost_fun(wall, ~ cov, src, dst, standardise = FALSE, na_barrier = TRUE)
+  expect_true(sqrt(cf_wall$fun(0)) > 2 * sqrt(cf_open$fun(0)))
+  ## same for the flat surface
+  cf_flat <- make_cost_fun(wall, ~ 1, src, dst, na_barrier = TRUE)
+  expect_equal(cf_flat$fun(), cf_wall$fun(0))
+  ## default still errors; a closed wall errors on connectivity
+  expect_error(make_cost_fun(wall, ~ cov, src, dst), "missing values")
+  closed <- r; closed[terra::cellFromRowCol(closed, 1:20, 10)] <- NA
+  expect_error(make_cost_fun(closed, ~ cov, src, dst, standardise = FALSE, na_barrier = TRUE),
+               "not connected")
+})
+
+test_that("focal window reproduces the full calculation inside the window", {
+  skip_if_not_installed("igraph")
+  sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 50, surface = TRUE,
+                      cost = ~ cov, beta_cost = 1, seed = 17)
+  src <- sim$ind_df[, c("src_x", "src_y")]; dst <- sim$trap_df[, c("x", "y")]
+  full <- make_cost_fun(sim$landscape, ~ cov, src, dst, standardise = FALSE)
+  win  <- make_cost_fun(sim$landscape, ~ cov, src, dst, standardise = FALSE, window = 30)
+  D_full <- full$fun(1); D_win <- win$fun(1)
+  d_euc <- sqrt(outer(src$src_x, dst$x, "-")^2 + outer(src$src_y, dst$y, "-")^2)
+  expect_equal(win$in_window, d_euc <= 30)
+  expect_true(all(is.infinite(D_win[!win$in_window])))
+  ## inside the window the box can only lengthen a path that would leave it
+  expect_true(all(D_win[win$in_window] >= D_full[win$in_window] - 1e-8))
+  expect_true(mean(abs(D_win[win$in_window] - D_full[win$in_window]) < 1e-8) > 0.95)
+  ## a window covering the whole landscape gives the identical fit
+  f_full <- dsf(~ 1, ~ 1, sim$frame, cost = ~ cov, landscape = sim$landscape)
+  f_win  <- dsf(~ 1, ~ 1, sim$frame, cost = ~ cov, landscape = sim$landscape, window = 200)
+  expect_equal(f_full$coef, f_win$coef)
+  expect_equal(f_full$logLik, f_win$logLik)
+  ## an observed destination beyond the window is refused
+  expect_error(dsf(~ 1, ~ 1, sim$frame, cost = ~ 1, landscape = sim$landscape, window = 3),
+               "beyond window")
+})
+
 test_that("trap_cov supplies destination covariates and is part of the fixed design", {
   f <- function(n) runif(n, -2, 2)
   a <- simulate_dsf(~ 1, ~ 0 + cov, beta_sigma = log(5), beta_theta = 0.5,

@@ -25,10 +25,15 @@
 #' responsibility to prepare it: it must contain every origin and
 #' destination, ideally with a buffer of about two dispersal scales beyond
 #' them so that least-cost paths are not forced along the raster edge; it
-#' must have no missing cells; and it should be coarse enough that Dijkstra
-#' from every origin at every likelihood evaluation is affordable (use
-#' [terra::aggregate()] beforehand). These conditions are checked and an
-#' informative error is raised if they fail.
+#' should be coarse enough that Dijkstra from every origin at every
+#' likelihood evaluation is affordable (use [terra::aggregate()]
+#' beforehand); and missing cells are either an error (default) or, with
+#' `na_barrier = TRUE`, impassable: they are removed from the graph, so
+#' paths go around them under every model (including the flat surface) and
+#' an origin and destination that are not connected through non-missing
+#' cells raise an error. Use this for sea, lakes or any region movement
+#' cannot cross; it is not a substitute for extending a covariate beyond the
+#' study boundary.
 #'
 #' @param landscape A `SpatRaster` with one layer per cost covariate.
 #' @param cost One-sided formula naming the layers, e.g. `~ cov`. No intercept
@@ -39,6 +44,19 @@
 #'   model.
 #' @param src Two-column matrix or data frame of origin coordinates.
 #' @param dst Two-column matrix or data frame of destination coordinates.
+#' @param na_barrier Logical; treat missing cells as impassable rather than
+#'   as an error? Default `FALSE`. A cell is missing if any cost covariate
+#'   is `NA` there (for `cost = ~ 1`, the first layer of `landscape` is
+#'   used).
+#' @param window Optional focal-window radius in map units. For each origin,
+#'   only destinations within `window` (Euclidean) receive a finite distance;
+#'   the rest are `Inf` (zero hazard), and the least-cost calculation runs on
+#'   the subgraph of a box of half-width `1.25 * window` around the origin,
+#'   built once. This cuts the per-evaluation cost from (origins × whole
+#'   raster) to (origins × box). Choose `window` as several dispersal scales
+#'   (4–5 σ) so that the dropped tail mass is negligible; [dsf()] refuses a
+#'   window that excludes any observed destination. `NULL` (default)
+#'   computes every origin to every destination on the whole raster.
 #' @param standardise Logical; centre and scale each cost covariate (mean 0,
 #'   unit SD over the raster cells) before building the cost surface?
 #'   Default `TRUE`. This keeps \eqn{\exp(\alpha^\top c)} well behaved during
@@ -47,16 +65,18 @@
 #'   be converted to raw units (`alpha / sd`). A message reports the scaling.
 #'
 #' @return A list with `fun(alpha)`, returning the n-by-J matrix of squared
-#'   least-cost distances for resistance vector `alpha`; `names`, the cost
-#'   covariate names; `raster`, the `SpatRaster` used; and `scale`, a data
-#'   frame of the mean and SD applied to each covariate (all 0 and 1 if
-#'   `standardise = FALSE`).
+#'   least-cost distances for resistance vector `alpha` (`Inf` beyond the
+#'   window); `names`, the cost covariate names; `raster`, the `SpatRaster`
+#'   used; `scale`, a data frame of the mean and SD applied to each covariate
+#'   (all 0 and 1 if `standardise = FALSE`); `window`; and `in_window`, the
+#'   n-by-J logical matrix of pairs with finite distance.
 #'
-#' @importFrom terra res cellFromXY values ext ncell
+#' @importFrom terra res cellFromXY values ext ncell xyFromCell rowColFromCell
 #' @importFrom igraph make_graph distances
 #' @importFrom stats sd
 #' @keywords internal
-make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
+make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE,
+                          na_barrier = FALSE, window = NULL) {
   if (!requireNamespace("igraph", quietly = TRUE))
     stop("package 'igraph' is required for the non-Euclidean DSF", call. = FALSE)
   r <- landscape
@@ -87,19 +107,28 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
   ncells  <- terra::ncell(r)
   cell_df <- if (length(vars)) as.data.frame(terra::values(r[[vars]])) else
     data.frame(row.names = seq_len(ncells))
-  for (v in vars) {
-    nbad <- sum(!is.finite(cell_df[[v]]))
-    if (nbad > 0)
-      stop("cost covariate '", v, "' has ", nbad, " of ", nrow(cell_df),
-           " cells with missing values. The resistance surface must be complete; ",
-           "fill or mask missing cells before fitting.", call. = FALSE)
+  ## missing cells: the layers named in cost, or the first layer for ~ 1
+  miss_cell <- if (length(vars)) {
+    Reduce(`|`, lapply(vars, function(v) !is.finite(cell_df[[v]])))
+  } else !is.finite(terra::values(r[[1]])[, 1])
+  if (any(miss_cell)) {
+    if (!na_barrier)
+      stop(sum(miss_cell), " of ", ncells, " raster cells have missing values. ",
+           "The resistance surface must be complete; fill or mask missing cells ",
+           "before fitting, or set na_barrier = TRUE to treat them as impassable.",
+           call. = FALSE)
+    if (any(miss_cell[c(src_cell, dst_cell)]))
+      stop(sum(miss_cell[src_cell]), " origin(s) and ", sum(miss_cell[dst_cell]),
+           " destination(s) fall on missing (impassable) cells.", call. = FALSE)
+    for (v in vars) cell_df[[v]][miss_cell] <- 0     # never used: edges removed below
   }
 
   ## ------------------------------------------------------------ standardise
   scale_df <- data.frame(var = vars, mean = rep(0, length(vars)), sd = rep(1, length(vars)))
   if (standardise && length(vars)) {
     for (i in seq_along(vars)) {
-      v <- vars[i]; m <- mean(cell_df[[v]]); s <- stats::sd(cell_df[[v]])
+      v <- vars[i]
+      m <- mean(cell_df[[v]][!miss_cell]); s <- stats::sd(cell_df[[v]][!miss_cell])
       if (!is.finite(s) || s == 0) stop("cost covariate '", v, "' is constant", call. = FALSE)
       cell_df[[v]] <- (cell_df[[v]] - m) / s
       scale_df$mean[i] <- m; scale_df$sd[i] <- s
@@ -125,10 +154,63 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
     from <- c(from, a); to <- c(to, b)
     len  <- c(len, rep(cs * sqrt(dr^2 + dc^2), length(a)))
   }
-  g <- igraph::make_graph(edges = rbind(from, to), n = nr * nc, directed = FALSE)
-
+  ## impassable cells: drop every edge that touches one
+  keep <- !(miss_cell[from] | miss_cell[to])
+  from <- from[keep]; to <- to[keep]; len <- len[keep]
   usrc <- sort(unique(src_cell)); spos <- match(src_cell, usrc)
   udst <- sort(unique(dst_cell)); dpos <- match(dst_cell, udst)
+  n_src <- nrow(src); n_dst <- nrow(dst)
+
+  ## ------------------------------------------------------------ Dijkstra driver
+  if (is.null(window)) {
+    ## one graph, every origin to every destination
+    g <- igraph::make_graph(edges = rbind(from, to), n = nr * nc, directed = FALSE)
+    dist_fun <- function(w) igraph::distances(g, v = usrc, to = udst, weights = w)[spos, dpos, drop = FALSE]
+    in_window <- matrix(TRUE, n_src, n_dst)
+  } else {
+    ## focal windows: for each unique origin cell, destinations within
+    ## `window` (Euclidean) and the induced subgraph of a box of half-width
+    ## 1.25 * window around the origin, built once; distances to
+    ## destinations beyond the window are Inf (zero hazard)
+    if (!is.numeric(window) || length(window) != 1 || window <= 0)
+      stop("window must be a single positive distance in map units", call. = FALSE)
+    half <- 1.25 * window
+    e_row <- (from - 1) %/% nc + 1; e_col <- (from - 1) %% nc + 1
+    t_row <- (to   - 1) %/% nc + 1; t_col <- (to   - 1) %% nc + 1
+    xy_src <- terra::xyFromCell(r, usrc)
+    in_window <- matrix(FALSE, n_src, n_dst)
+    focal <- vector("list", length(usrc))
+    for (u in seq_along(usrc)) {
+      rows_u <- which(spos == u)
+      d_euc  <- sqrt((dst[, 1] - xy_src[u, 1])^2 + (dst[, 2] - xy_src[u, 2])^2)
+      dcols  <- which(d_euc <= window)
+      in_window[rows_u, dcols] <- TRUE
+      rc <- terra::rowColFromCell(r, usrc[u])
+      hr <- ceiling(half / cs)
+      r0 <- max(1, rc[1] - hr); r1 <- min(nr, rc[1] + hr)
+      c0 <- max(1, rc[2] - hr); c1 <- min(nc, rc[2] + hr)
+      eidx <- which(e_row >= r0 & e_row <= r1 & e_col >= c0 & e_col <= c1 &
+                    t_row >= r0 & t_row <= r1 & t_col >= c0 & t_col <= c1)
+      cells_u <- as.vector(id[r0:r1, c0:c1])
+      loc <- match(c(from[eidx], to[eidx]), cells_u)
+      g_u <- igraph::make_graph(edges = rbind(loc[seq_along(eidx)], loc[-seq_along(eidx)]),
+                                n = length(cells_u), directed = FALSE)
+      ucell <- sort(unique(dst_cell[dcols]))
+      focal[[u]] <- list(rows = rows_u, dcols = dcols, eidx = eidx, g = g_u,
+                         v = match(usrc[u], cells_u),
+                         to = match(ucell, cells_u),
+                         dpos = match(dst_cell[dcols], ucell))
+    }
+    dist_fun <- function(w) {
+      D <- matrix(Inf, n_src, n_dst)
+      for (f in focal) {
+        if (!length(f$dcols)) next
+        d <- igraph::distances(f$g, v = f$v, to = f$to, weights = w[f$eidx])[1, f$dpos]
+        D[f$rows, f$dcols] <- matrix(d, length(f$rows), length(f$dcols), byrow = TRUE)
+      }
+      D
+    }
+  }
 
   fun <- function(alpha = numeric(0)) {
     if (length(alpha) != ncol(Xc))
@@ -136,11 +218,22 @@ make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
     if (any(!is.finite(alpha))) stop("non-finite resistance parameter", call. = FALSE)
     ## cap the linear predictor so exp() cannot overflow to Inf (which would
     ## give NaN edge weights); costs above exp(50) are effectively barriers
-    lp <- if (ncol(Xc)) drop(Xc %*% alpha) else rep(0, ncells)
+    lp <- if (ncol(Xc)) as.vector(Xc %*% alpha) else rep(0, ncells)   # as.vector drops row names
     cell_cost <- exp(pmin(lp, 50))
     w <- 0.5 * (cell_cost[from] + cell_cost[to]) * len
-    D <- igraph::distances(g, v = usrc, to = udst, weights = w)
-    D[spos, dpos, drop = FALSE]^2
+    dist_fun(w)^2
   }
-  list(fun = fun, names = colnames(Xc), raster = r, scale = scale_df)
+
+  if (any(miss_cell)) {
+    ## every origin must reach every in-window destination through passable cells
+    D0 <- fun(rep(0, ncol(Xc)))
+    bad <- in_window & !is.finite(D0)
+    if (any(bad))
+      stop(sum(bad), " origin-destination pair(s) are not connected through ",
+           "non-missing cells; with na_barrier = TRUE the passable region must ",
+           "connect every origin to every destination", 
+           if (!is.null(window)) " within the window", ".", call. = FALSE)
+  }
+  list(fun = fun, names = colnames(Xc), raster = r, scale = scale_df,
+       window = window, in_window = in_window)
 }

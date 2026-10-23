@@ -16,6 +16,8 @@ dsf(
   cost = NULL,
   landscape = NULL,
   standardise_cost = TRUE,
+  na_barrier = FALSE,
+  window = NULL,
   start = NULL,
   hessian = TRUE
 )
@@ -49,6 +51,17 @@ affordable (aggregate with \code{\link[terra:aggregate]{terra::aggregate()}} bef
 
 \item{standardise_cost}{Logical; standardise the cost covariates before
 building the resistance surface (see \code{\link[=make_cost_fun]{make_cost_fun()}}). Default \code{TRUE}.}
+
+\item{na_barrier}{Logical; treat missing raster cells as impassable
+(see \code{\link[=make_cost_fun]{make_cost_fun()}}). Default \code{FALSE}, which makes missing cells an
+error.}
+
+\item{window}{Optional focal-window radius (map units) for the least-cost
+calculation: destinations farther than this from an origin get zero
+hazard and each origin's Dijkstra runs on a local subgraph (see
+\code{\link[=make_cost_fun]{make_cost_fun()}}). Use several dispersal scales. The same truncated
+choice set applies to \code{cost = ~ 1}, so flat and resistance fits remain
+comparable; the Euclidean fit (\code{cost = NULL}) is not truncated.}
 
 \item{start}{Optional numeric vector of starting values, in the order
 \code{c(beta_sigma, beta_theta, alpha)}.}

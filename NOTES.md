@@ -69,6 +69,13 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
   effect = α / sd). The linear predictor is capped at 50 before `exp()` and
   the nll returns 1e10 on non-finite values, so the optimiser cannot wander
   into NaN edge weights. `cost_res` has been removed.
+  Options: `na_barrier = TRUE` treats NA cells as impassable (edges dropped;
+  errors if any origin/destination is on NA or any in-window pair is
+  disconnected); `window = <km>` restricts each origin to destinations
+  within that Euclidean radius (hazard 0 beyond) and runs Dijkstra on a
+  per-origin box of half-width 1.25 × window built once — ~6× faster per
+  evaluation at 160k cells; `dsf()` refuses a window that excludes an
+  observed destination. Both default off.
 - Simulator options: `trap_layout = "random" | "grid"`; `jitter` (fraction of
   lattice spacing, 0 = regular, default); `births = "traps" | "uniform"`;
   `surface = TRUE` only when a Gaussian random field is needed; `trap_cov`
@@ -77,7 +84,7 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
   time-varying ones; `landscape_seed` fixes the design across replicates
   (functions for `trap_cov`/`trap_tv` are evaluated inside its scope);
   `exclude_natal`; `cost = ~ cov` with `beta_cost` (raster used as supplied).
-- Tests: `tests/testthat/test-roundtrip.R` (15).
+- Tests: `tests/testthat/test-roundtrip.R` (16).
 - Citation: `inst/CITATION`.
 - Workflow after an edit: Document → Test → Install → commit → push.
 
@@ -152,10 +159,39 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
   so Euclidean vs resistance confounds lattice and landscape). Sim 2.3 and
   the mink case study report resistance vs flat; the Euclidean fit is kept
   as a reference row.
+- Standardising the cost covariate rescales σ: exp(α(x−m)/s) =
+  exp(−αm/s)·exp((α/s)x), a constant factor on every cell that σ absorbs
+  (σ_std = exp(−αm/s)·σ_raw). With the raw covariate a cell at water (c = 0)
+  costs exactly 1, so σ is in geometric km along watercourses. Mink fits use
+  `standardise_cost = FALSE`.
+- Performance: `Xc %*% alpha` carries model.matrix row names; a named
+  640k-vector made every igraph call copy 160k strings. `as.vector()` fixed
+  it (windowed eval 17 s → 5 s).
 - Overflow: exp(α·c) with raw-unit covariates (e.g. distance to water in km
   over a large raster) overflowed to Inf → igraph "Weights must not contain
   NaN". Fixed by standardising covariates, capping the predictor, and the
   nll guard; the model is unchanged, only the parameterisation of α.
+
+## Mink: α sign (2026-10-23)
+
+- `dsf()` with standardised d2water, 1-km block means, max-fill outside:
+  α̂ = −0.37 per SD (SE 0.057). Preliminary grid search (481 pairs, 250 m,
+  α ∈ [0, 8]): α = 1.39 per km, σ = 19 km (= 13.4 km in our 2σ²
+  convention).
+- Profile likelihood over α (raw per km, NA barrier, σ profiled) is
+  **bimodal**: global mode α ≈ −0.55 (logLik ≈ −1474), local mode α ≈ +1.4
+  (≈ −1487.5, the preliminary estimate), cusp at α = 0 (≈ −1491.5, the
+  minimum). LRT vs flat ≈ 35 (negative mode) and ≈ 8 (positive mode).
+- The cusp at 0 is structural (least-cost distance is a min over paths of
+  convex functions; all paths tie at α = 0). Wald SEs near 0 are
+  meaningless; BFGS from `start` = 0 sits on the cusp and goes left.
+- Interpretation: every origin and raft is at water (cost 1 either sign).
+  α > 0 = riparian corridor. α < 0 = inland cheap, so far traps are
+  compressed relative to near ones = a heavier-tailed kernel in geometric
+  terms (or a deficit of very short dispersals). Next: kernel shape
+  (exponential / exponential-power) on the flat surface, then re-profile α;
+  and 500 m resolution with `aggregate(fun = "min")` (distance from a block
+  to water is the min, not the mean; keeps 0 = on water).
 
 ## Log
 
@@ -180,3 +216,7 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
   (15 tests); `mink_kernel_map.R` (Figure 4: covariate, flat-surface and
   resistance kernels from one origin). gdistance considered and rejected
   (transition layer would be rebuilt every evaluation).
+- **2026-10-23 (later)** – `na_barrier`, `window` (focal subgraphs),
+  row-name performance fix; 16 tests, all run here (R 4.3). gdistance
+  equivalence verified numerically (rel. diff 5e-16). Mink α profile
+  bimodal; see section above.
