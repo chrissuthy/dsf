@@ -30,6 +30,10 @@
 #' computed on the landscape aggregated to `cost_res`; see [make_cost_fun()].
 #' \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
 #' likelihood-ratio test against the Euclidean fit tests the landscape effect.
+#' By default the cost covariates are standardised over the raster cells
+#' (`standardise_cost = TRUE`) so that \eqn{\exp(\alpha^\top c)} stays well
+#' behaved during optimisation; `cost:` coefficients are then per SD of the
+#' covariate, and the means and SDs used are in `cost_fun$scale`.
 #'
 #' Parameters are estimated on the log scale with [stats::optim()] (BFGS);
 #' standard errors are from the inverse numerical Hessian.
@@ -50,6 +54,8 @@
 #' @param landscape `SpatRaster` with the layers named in `cost`.
 #' @param cost_res Cell size for least-cost path calculations; the landscape
 #'   is aggregated to this resolution. Coarser is faster.
+#' @param standardise_cost Logical; standardise the cost covariates before
+#'   building the resistance surface (see [make_cost_fun()]). Default `TRUE`.
 #' @param start Optional numeric vector of starting values, in the order
 #'   `c(beta_sigma, beta_theta, alpha)`.
 #' @param hessian Logical; compute standard errors?
@@ -91,7 +97,7 @@
 #' @export
 dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
                 trap_tv = NULL, exclude_natal = FALSE,
-                cost = NULL, landscape = NULL, cost_res = 1,
+                cost = NULL, landscape = NULL, cost_res = 1, standardise_cost = TRUE,
                 start = NULL, hessian = TRUE) {
 
   ## ------------------------------------------------------------ frame
@@ -118,7 +124,8 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
   if (!is.null(cost)) {
     if (is.null(landscape)) stop("landscape is required when cost is supplied", call. = FALSE)
     cost_fun <- make_cost_fun(landscape, cost, cost_res,
-                              fr$ind[, c("src_x", "src_y")], fr$traps[, c("x", "y")])
+                              fr$ind[, c("src_x", "src_y")], fr$traps[, c("x", "y")],
+                              standardise = standardise_cost)
     k <- length(cost_fun$names)
   }
   mask <- ifelse(fr$avail, 0, -Inf)
@@ -126,13 +133,17 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
 
   ## ------------------------------------------------------------ negative log-likelihood
   nll <- function(par) {
+    if (any(!is.finite(par))) return(1e10)
     log_sigma <- drop(Xs %*% par[seq_len(p)])
     lt <- off_rows
     if (q > 0) lt <- lt + theta_rows(drop(Xt %*% par[p + seq_len(q)]), fr)
     dd <- if (k > 0) cost_fun$fun(par[p + q + seq_len(k)]) else d2
     ll <- -dd / (2 * exp(2 * log_sigma)) + lt + mask
     mx <- apply(ll, 1, max)
-    -sum(ll[obs] - (mx + log(rowSums(exp(ll - mx)))))
+    val <- -sum(ll[obs] - (mx + log(rowSums(exp(ll - mx)))))
+    ## a large finite value lets the optimiser back off from regions where
+    ## the likelihood is -Inf (e.g. extreme resistance parameters)
+    if (!is.finite(val)) 1e10 else val
   }
 
   ## ------------------------------------------------------------ fit
@@ -184,5 +195,8 @@ print.dsf <- function(x, ...) {
   i <- match("sigma:(Intercept)", names(x$coef))
   if (!is.na(i))
     cat("\n  sigma at reference level:", round(exp(x$coef[i]), 3), "\n")
+  if (!is.null(x$cost_fun) && any(x$cost_fun$scale$sd != 1))
+    cat("  cost coefficients are per SD of the covariate (sd:",
+        paste(signif(x$cost_fun$scale$sd, 3), collapse = ", "), ")\n")
   invisible(x)
 }

@@ -16,6 +16,7 @@ dsf(
   cost = NULL,
   landscape = NULL,
   cost_res = 1,
+  standardise_cost = TRUE,
   start = NULL,
   hessian = TRUE
 )
@@ -45,6 +46,9 @@ Euclidean model.}
 
 \item{cost_res}{Cell size for least-cost path calculations; the landscape
 is aggregated to this resolution. Coarser is faster.}
+
+\item{standardise_cost}{Logical; standardise the cost covariates before
+building the resistance surface (see \code{\link[=make_cost_fun]{make_cost_fun()}}). Default \code{TRUE}.}
 
 \item{start}{Optional numeric vector of starting values, in the order
 \code{c(beta_sigma, beta_theta, alpha)}.}
@@ -103,6 +107,10 @@ alongside the other parameters (coefficients named \verb{cost:}). Paths are
 computed on the landscape aggregated to \code{cost_res}; see \code{\link[=make_cost_fun]{make_cost_fun()}}.
 \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
 likelihood-ratio test against the Euclidean fit tests the landscape effect.
+By default the cost covariates are standardised over the raster cells
+(\code{standardise_cost = TRUE}) so that \eqn{\exp(\alpha^\top c)} stays well
+behaved during optimisation; \verb{cost:} coefficients are then per SD of the
+covariate, and the means and SDs used are in \code{cost_fun$scale}.
 
 Parameters are estimated on the log scale with \code{\link[stats:optim]{stats::optim()}} (BFGS);
 standard errors are from the inverse numerical Hessian.

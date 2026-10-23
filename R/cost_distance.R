@@ -23,15 +23,25 @@
 #'   aggregated by block mean to this resolution before the graph is built.
 #' @param src Two-column matrix or data frame of origin coordinates.
 #' @param dst Two-column matrix or data frame of destination coordinates.
+#' @param standardise Logical; centre and scale each cost covariate (mean 0,
+#'   unit SD over the aggregated raster cells) before building the cost
+#'   surface? Default `TRUE`. This keeps \eqn{\exp(\alpha^\top c)} well behaved
+#'   during optimisation and makes \eqn{\alpha} an effect per SD of the
+#'   covariate; the means and SDs used are returned in `scale` so that
+#'   \eqn{\alpha} can be converted to raw units (`alpha / sd`). A message
+#'   reports the scaling.
 #'
 #' @return A list with `fun(alpha)`, returning the n-by-J matrix of squared
 #'   least-cost distances for resistance vector `alpha`; `names`, the cost
-#'   covariate names; and `raster`, the aggregated `SpatRaster`.
+#'   covariate names; `raster`, the aggregated `SpatRaster`; and `scale`, a
+#'   data frame of the mean and SD applied to each covariate (all 0 and 1 if
+#'   `standardise = FALSE`).
 #'
 #' @importFrom terra aggregate res cellFromXY values
 #' @importFrom igraph make_graph distances
+#' @importFrom stats sd
 #' @keywords internal
-make_cost_fun <- function(landscape, cost, cost_res, src, dst) {
+make_cost_fun <- function(landscape, cost, cost_res, src, dst, standardise = TRUE) {
   if (!requireNamespace("igraph", quietly = TRUE))
     stop("package 'igraph' is required for the non-Euclidean DSF", call. = FALSE)
 
@@ -45,8 +55,22 @@ make_cost_fun <- function(landscape, cost, cost_res, src, dst) {
   if (length(miss)) stop("cost covariates not in landscape: ", paste(miss, collapse = ", "),
                          call. = FALSE)
   cell_df <- as.data.frame(terra::values(r[[vars]]))
+  if (any(!is.finite(as.matrix(cell_df))))
+    stop("NA in cost covariates after aggregation", call. = FALSE)
+  scale_df <- data.frame(var = vars, mean = 0, sd = 1)
+  if (standardise) {
+    for (i in seq_along(vars)) {
+      v <- vars[i]; m <- mean(cell_df[[v]]); s <- stats::sd(cell_df[[v]])
+      if (!is.finite(s) || s == 0) stop("cost covariate '", v, "' is constant", call. = FALSE)
+      cell_df[[v]] <- (cell_df[[v]] - m) / s
+      scale_df$mean[i] <- m; scale_df$sd[i] <- s
+    }
+    message("cost covariate(s) standardised over raster cells: ",
+            paste0(vars, " (mean ", signif(scale_df$mean, 3), ", sd ",
+                   signif(scale_df$sd, 3), ")", collapse = "; "),
+            "; cost coefficients are per SD")
+  }
   Xc <- stats::model.matrix(stats::update(cost, ~ . + 0), cell_df)
-  if (any(!is.finite(Xc))) stop("NA in cost covariates after aggregation", call. = FALSE)
 
   ## 8-neighbour edge list on the grid (cell ids are row-major in terra)
   nr <- nrow(r); nc <- ncol(r); cs <- terra::res(r)[1]
@@ -71,10 +95,13 @@ make_cost_fun <- function(landscape, cost, cost_res, src, dst) {
   udst <- sort(unique(dst_cell)); dpos <- match(dst_cell, udst)
 
   fun <- function(alpha) {
-    cell_cost <- exp(drop(Xc %*% alpha))
+    if (any(!is.finite(alpha))) stop("non-finite resistance parameter", call. = FALSE)
+    ## cap the linear predictor so exp() cannot overflow to Inf (which would
+    ## give NaN edge weights); costs above exp(50) are effectively barriers
+    cell_cost <- exp(pmin(drop(Xc %*% alpha), 50))
     w <- 0.5 * (cell_cost[from] + cell_cost[to]) * len
     D <- igraph::distances(g, v = usrc, to = udst, weights = w)
     D[spos, dpos, drop = FALSE]^2
   }
-  list(fun = fun, names = colnames(Xc), raster = r)
+  list(fun = fun, names = colnames(Xc), raster = r, scale = scale_df)
 }

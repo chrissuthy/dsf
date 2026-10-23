@@ -4,7 +4,7 @@
 \alias{make_cost_fun}
 \title{Build a least-cost distance calculator from a landscape raster}
 \usage{
-make_cost_fun(landscape, cost, cost_res, src, dst)
+make_cost_fun(landscape, cost, cost_res, src, dst, standardise = TRUE)
 }
 \arguments{
 \item{landscape}{A \code{SpatRaster} with one layer per cost covariate.}
@@ -19,11 +19,21 @@ aggregated by block mean to this resolution before the graph is built.}
 \item{src}{Two-column matrix or data frame of origin coordinates.}
 
 \item{dst}{Two-column matrix or data frame of destination coordinates.}
+
+\item{standardise}{Logical; centre and scale each cost covariate (mean 0,
+unit SD over the aggregated raster cells) before building the cost
+surface? Default \code{TRUE}. This keeps \eqn{\exp(\alpha^\top c)} well behaved
+during optimisation and makes \eqn{\alpha} an effect per SD of the
+covariate; the means and SDs used are returned in \code{scale} so that
+\eqn{\alpha} can be converted to raw units (\code{alpha / sd}). A message
+reports the scaling.}
 }
 \value{
 A list with \code{fun(alpha)}, returning the n-by-J matrix of squared
 least-cost distances for resistance vector \code{alpha}; \code{names}, the cost
-covariate names; and \code{raster}, the aggregated \code{SpatRaster}.
+covariate names; \code{raster}, the aggregated \code{SpatRaster}; and \code{scale}, a
+data frame of the mean and SD applied to each covariate (all 0 and 1 if
+\code{standardise = FALSE}).
 }
 \description{
 Aggregates a landscape raster to the resolution used for path

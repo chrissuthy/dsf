@@ -27,6 +27,7 @@ simulate_dsf(
   cost = NULL,
   beta_cost = NULL,
   cost_res = 1,
+  standardise_cost = TRUE,
   op_mat = NULL,
   exclude_natal = FALSE,
   landscape_seed = NULL,
@@ -113,6 +114,11 @@ dispersal uses least-cost distance with cell cost
 
 \item{cost_res}{Cell size for least-cost paths; the landscape is aggregated
 to this resolution.}
+
+\item{standardise_cost}{Logical; standardise the cost covariates over the
+aggregated raster before building the resistance surface, as \code{\link[=dsf]{dsf()}}
+does by default, so that \code{beta_cost} is per SD of the covariate.
+Default \code{TRUE}.}
 
 \item{op_mat}{Optional trap-by-year operational matrix (0/1), with one row
 per trap and columns named by year. If \code{NULL}, every trap is open in
