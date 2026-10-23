@@ -57,8 +57,18 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
 - `dsf()` fits by maximum likelihood; returns class `dsf` with `coef`, `se`,
   `logLik`, `AIC`, `frame`.
 - `dsf_frame()` assembles and checks the data (above).
-- `make_cost_fun()` (internal) builds least-cost distances with igraph on a
-  raster aggregated to `cost_res`.
+- `make_cost_fun()` (internal) builds least-cost distances with igraph on
+  the raster **as supplied**. Preparing the raster (extent with a buffer of
+  ~2 dispersal scales, aggregation to an affordable resolution, filling or
+  masking NAs) is the user's job, not the package's; the function checks
+  that every origin and destination falls inside the raster and that no
+  cell is missing, and raises an informative error otherwise. Cost
+  covariates are standardised over raster cells by default
+  (`standardise_cost = TRUE`, with a message); `cost:` coefficients are then
+  per SD, and the means/SDs are returned in `cost_fun$scale` (raw-unit
+  effect = α / sd). The linear predictor is capped at 50 before `exp()` and
+  the nll returns 1e10 on non-finite values, so the optimiser cannot wander
+  into NaN edge weights. `cost_res` has been removed.
 - Simulator options: `trap_layout = "random" | "grid"`; `jitter` (fraction of
   lattice spacing, 0 = regular, default); `births = "traps" | "uniform"`;
   `surface = TRUE` only when a Gaussian random field is needed; `trap_cov`
@@ -66,8 +76,8 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
   covariates; `trap_tv` (array or function of (ntraps, years)) for
   time-varying ones; `landscape_seed` fixes the design across replicates
   (functions for `trap_cov`/`trap_tv` are evaluated inside its scope);
-  `exclude_natal`; `cost = ~ cov` with `beta_cost` / `cost_res`.
-- Tests: `tests/testthat/test-roundtrip.R` (13).
+  `exclude_natal`; `cost = ~ cov` with `beta_cost` (raster used as supplied).
+- Tests: `tests/testthat/test-roundtrip.R` (14).
 - Citation: `inst/CITATION`.
 - Workflow after an edit: Document → Test → Install → commit → push.
 
@@ -76,10 +86,11 @@ destinations within every year. `simulate_dsf()` draws from the same frame.
 | Script | Purpose |
 |---|---|
 | `sim00_extent_density.R` | Paper Sim 1: Rayleigh-estimator bias across extent (2×2, 4×4, 6×6 D) × intensity (1, 4, 9 per D²); 100 individuals, uniform origins, regular lattice, 100 reps |
-| `fig01_naive_bias.R` | Figure 1 from sim00 |
+| `fig01_naive_bias.R`, `fig01b_kernels.R` | Figure 1 (bias) and estimated kernels from sim00 |
 | `sim02_age.R` | Paper Sim 2.1: age covariate on σ (γ₀ = log 5, γ₁ = 0.3); null vs age DSF; n = 50 and 500 |
 | `sim03_theta.R` | Paper Sim 2.2: z_j ~ U(−2, 2) on θ, β = 0.5; null vs hazard DSF; n = 50 and 500 |
 | `sim04_noneuc.R` | Paper Sim 2.3: resistance surface exp(α c(x)), α = 1, 200 × 200 raster (500 m), exponential GRF range 10 km; Euclidean vs non-Euclidean DSF; 50 reps (parallel over replicates) |
+| `mink_dsf.R` | Case study: American mink, eastern England, 2024; Euclidean vs non-Euclidean (distance to water); raster prepared in the script (km units, NA outside counties → max distance, aggregated to 1 km) |
 | `sim01_null.R`, `sim05_naive.R` | earlier null and trap-count studies; superseded by sim00/sim02 |
 
 Shared Sim 2 design: 100 × 100 km, 250 random traps fixed across years and
@@ -109,6 +120,11 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
 - Sibling origins inflate σ by ~√2; record pair type.
 - Euclidean and non-Euclidean σ are on different scales; report the
   discrepancy as misattribution, not simple bias.
+- Case study: individuals restricted to those with both locations inside a
+  5 km negative buffer of the county boundary (IIA: restricting data and
+  choice set consistently leaves the conditional likelihood unchanged).
+- Package scope: the user supplies a prepared raster; the package checks and
+  standardises. Mink-specific preprocessing stays in the case-study script.
 
 ## Technical notes
 
@@ -120,6 +136,10 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
 - Non-Euclidean fits: ~1.5 min (n = 50) to ~10 min (n = 500) on a 40 000-node
   graph; parallelise over replicates with `parallel::parLapply`, seeding per
   replicate.
+- Overflow: exp(α·c) with raw-unit covariates (e.g. distance to water in km
+  over a large raster) overflowed to Inf → igraph "Weights must not contain
+  NaN". Fixed by standardising covariates, capping the predictor, and the
+  nll guard; the model is unchanged, only the parameterisation of α.
 
 ## Log
 
@@ -135,3 +155,9 @@ replicates, 5 cohorts of 10 or 100 born at uniform locations, ages 1/2/3 with
   objects; θ_jt (time-varying destination covariates) threaded through
   `dsf()` and `simulate_dsf()` (`trap_tv`); year main effects on θ refused;
   13 tests.
+- **2026-10-23** – Mink case study (Euclidean vs non-Euclidean only; 301
+  pairs, 1,167 traps, 2024). Non-Euclidean fit made stable by standardising
+  cost covariates under the hood. Raster preprocessing (aggregation, NA
+  filling) moved out of the package into the case-study script:
+  `make_cost_fun()` now checks containment and completeness and errors
+  informatively; `cost_res` removed; 14 tests.

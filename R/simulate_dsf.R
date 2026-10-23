@@ -83,13 +83,13 @@
 #'   a resistance surface (e.g. `~ cov`); requires `surface = TRUE`. With it,
 #'   dispersal uses least-cost distance with cell cost
 #'   \eqn{\exp(\alpha^\top c(x))}; see [make_cost_fun()].
-#' @param beta_cost Resistance coefficients \eqn{\alpha} for `cost`.
-#' @param cost_res Cell size for least-cost paths; the landscape is aggregated
-#'   to this resolution.
+#' @param beta_cost Resistance coefficients \eqn{\alpha} for `cost`. Least-cost
+#'   paths are computed on the landscape raster at its own resolution
+#'   (`ncell`), so choose `ncell` with the cost of repeated Dijkstra runs in
+#'   mind.
 #' @param standardise_cost Logical; standardise the cost covariates over the
-#'   aggregated raster before building the resistance surface, as [dsf()]
-#'   does by default, so that `beta_cost` is per SD of the covariate.
-#'   Default `TRUE`.
+#'   raster before building the resistance surface, as [dsf()] does by
+#'   default, so that `beta_cost` is per SD of the covariate. Default `TRUE`.
 #' @param op_mat Optional trap-by-year operational matrix (0/1), with one row
 #'   per trap and columns named by year. If `NULL`, every trap is open in
 #'   every observation year.
@@ -152,8 +152,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
                          trap_layout = c("random", "grid"), jitter = 0,
                          trap_cov = NULL, trap_tv = NULL,
                          births = c("traps", "uniform"),
-                         cost = NULL, beta_cost = NULL, cost_res = 1,
-                         standardise_cost = TRUE,
+                         cost = NULL, beta_cost = NULL, standardise_cost = TRUE,
                          op_mat = NULL, exclude_natal = FALSE,
                          landscape_seed = NULL, design = NULL, seed = NULL) {
 
@@ -211,7 +210,7 @@ simulate_dsf <- function(sigma_formula = ~ 1, theta_formula = ~ 1,
   if (!is.null(cost)) {
     if (!surface && is.null(design))
       stop("cost requires a landscape surface: set surface = TRUE", call. = FALSE)
-    cf <- make_cost_fun(landscape, cost, cost_res,
+    cf <- make_cost_fun(landscape, cost,
                         animals[, c("src_x", "src_y")], traps[, c("x", "y")],
                         standardise = standardise_cost)
     if (length(beta_cost) != length(cf$names))

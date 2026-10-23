@@ -23,7 +23,6 @@ importFrom(stats,
   terms
 )
 importFrom(terra,
-  aggregate,
   cellFromXY,
   crds,
   ext,

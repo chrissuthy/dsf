@@ -26,7 +26,6 @@ simulate_dsf(
   births = c("traps", "uniform"),
   cost = NULL,
   beta_cost = NULL,
-  cost_res = 1,
   standardise_cost = TRUE,
   op_mat = NULL,
   exclude_natal = FALSE,
@@ -110,15 +109,14 @@ a resistance surface (e.g. \code{~ cov}); requires \code{surface = TRUE}. With i
 dispersal uses least-cost distance with cell cost
 \eqn{\exp(\alpha^\top c(x))}; see \code{\link[=make_cost_fun]{make_cost_fun()}}.}
 
-\item{beta_cost}{Resistance coefficients \eqn{\alpha} for \code{cost}.}
-
-\item{cost_res}{Cell size for least-cost paths; the landscape is aggregated
-to this resolution.}
+\item{beta_cost}{Resistance coefficients \eqn{\alpha} for \code{cost}. Least-cost
+paths are computed on the landscape raster at its own resolution
+(\code{ncell}), so choose \code{ncell} with the cost of repeated Dijkstra runs in
+mind.}
 
 \item{standardise_cost}{Logical; standardise the cost covariates over the
-aggregated raster before building the resistance surface, as \code{\link[=dsf]{dsf()}}
-does by default, so that \code{beta_cost} is per SD of the covariate.
-Default \code{TRUE}.}
+raster before building the resistance surface, as \code{\link[=dsf]{dsf()}} does by
+default, so that \code{beta_cost} is per SD of the covariate. Default \code{TRUE}.}
 
 \item{op_mat}{Optional trap-by-year operational matrix (0/1), with one row
 per trap and columns named by year. If \code{NULL}, every trap is open in

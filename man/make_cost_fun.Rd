@@ -4,7 +4,7 @@
 \alias{make_cost_fun}
 \title{Build a least-cost distance calculator from a landscape raster}
 \usage{
-make_cost_fun(landscape, cost, cost_res, src, dst, standardise = TRUE)
+make_cost_fun(landscape, cost, src, dst, standardise = TRUE)
 }
 \arguments{
 \item{landscape}{A \code{SpatRaster} with one layer per cost covariate.}
@@ -13,33 +13,28 @@ make_cost_fun(landscape, cost, cost_res, src, dst, standardise = TRUE)
 is used: a constant multiplier on all costs rescales every distance by
 the same factor and is absorbed by \eqn{\sigma}.}
 
-\item{cost_res}{Cell size (map units) for the path graph. The landscape is
-aggregated by block mean to this resolution before the graph is built.}
-
 \item{src}{Two-column matrix or data frame of origin coordinates.}
 
 \item{dst}{Two-column matrix or data frame of destination coordinates.}
 
 \item{standardise}{Logical; centre and scale each cost covariate (mean 0,
-unit SD over the aggregated raster cells) before building the cost
-surface? Default \code{TRUE}. This keeps \eqn{\exp(\alpha^\top c)} well behaved
-during optimisation and makes \eqn{\alpha} an effect per SD of the
-covariate; the means and SDs used are returned in \code{scale} so that
-\eqn{\alpha} can be converted to raw units (\code{alpha / sd}). A message
-reports the scaling.}
+unit SD over the raster cells) before building the cost surface?
+Default \code{TRUE}. This keeps \eqn{\exp(\alpha^\top c)} well behaved during
+optimisation and makes \eqn{\alpha} an effect per SD of the covariate;
+the means and SDs used are returned in \code{scale} so that \eqn{\alpha} can
+be converted to raw units (\code{alpha / sd}). A message reports the scaling.}
 }
 \value{
 A list with \code{fun(alpha)}, returning the n-by-J matrix of squared
 least-cost distances for resistance vector \code{alpha}; \code{names}, the cost
-covariate names; \code{raster}, the aggregated \code{SpatRaster}; and \code{scale}, a
-data frame of the mean and SD applied to each covariate (all 0 and 1 if
+covariate names; \code{raster}, the \code{SpatRaster} used; and \code{scale}, a data
+frame of the mean and SD applied to each covariate (all 0 and 1 if
 \code{standardise = FALSE}).
 }
 \description{
-Aggregates a landscape raster to the resolution used for path
-calculations, builds the 8-neighbour graph once, and returns a function
-that computes squared least-cost distances from a set of origins to a set
-of destinations for any value of the resistance parameters. Used
+Builds the 8-neighbour graph of a resistance raster once and returns a
+function that computes squared least-cost distances from a set of origins
+to a set of destinations for any value of the resistance parameters. Used
 internally by \code{\link[=dsf]{dsf()}} and \code{\link[=simulate_dsf]{simulate_dsf()}} for the non-Euclidean model.
 }
 \details{
@@ -50,5 +45,14 @@ times the Euclidean step length, and the ecological distance is the
 least-cost path length over the graph (\code{\link[igraph:distances]{igraph::distances()}}). With
 \eqn{\alpha = 0} every cell has cost 1 and the result approximates
 Euclidean distance on the grid.
+
+The raster is used at the resolution supplied. It is the user's
+responsibility to prepare it: it must contain every origin and
+destination, ideally with a buffer of about two dispersal scales beyond
+them so that least-cost paths are not forced along the raster edge; it
+must have no missing cells; and it should be coarse enough that Dijkstra
+from every origin at every likelihood evaluation is affordable (use
+\code{\link[terra:aggregate]{terra::aggregate()}} beforehand). These conditions are checked and an
+informative error is raised if they fail.
 }
 \keyword{internal}

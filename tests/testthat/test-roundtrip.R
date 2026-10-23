@@ -95,11 +95,11 @@ test_that("non-Euclidean DSF recovers alpha (coarse grid)", {
   skip_on_cran()
   skip_if_not_installed("igraph")
   sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5),
-                      ncell = 100, surface = TRUE, aRange = 10,
-                      cost = ~ cov, beta_cost = 1, cost_res = 2,
+                      ncell = 50, surface = TRUE, aRange = 10,
+                      cost = ~ cov, beta_cost = 1,
                       exclude_natal = TRUE, seed = 5)
   fit <- dsf(~ 1, ~ 1, sim$ind_df, sim$trap_df, sim$op_mat, exclude_natal = TRUE,
-             cost = ~ cov, landscape = sim$landscape, cost_res = 2)
+             cost = ~ cov, landscape = sim$landscape)
   expect_equal(fit$convergence, 0)
   expect_true(abs(fit$coef["cost:cov"] - 1) < 3 * fit$se["cost:cov"])
   expect_true(abs(fit$coef["sigma:(Intercept)"] - log(5)) < 3 * fit$se["sigma:(Intercept)"])
@@ -108,7 +108,7 @@ test_that("non-Euclidean DSF recovers alpha (coarse grid)", {
 test_that("alpha = 0 cost distance approximates Euclidean", {
   skip_if_not_installed("igraph")
   sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 100, surface = TRUE, seed = 6)
-  cf <- make_cost_fun(sim$landscape, ~ cov, cost_res = 1,
+  cf <- make_cost_fun(sim$landscape, ~ cov,
                       sim$ind_df[, c("src_x", "src_y")], sim$trap_df[, c("x", "y")])
   d_cost <- sqrt(cf$fun(0))
   d_euc  <- sqrt(outer(sim$ind_df$src_x, sim$trap_df$x, "-")^2 +
@@ -117,6 +117,15 @@ test_that("alpha = 0 cost distance approximates Euclidean", {
   ## snapping adds up to one cell of slack, so only test well-separated pairs
   ratio <- (d_cost / d_euc)[d_euc > 10]
   expect_true(all(ratio > 0.9 & ratio < 1.15))
+})
+
+test_that("cost raster must contain all points and have no NA", {
+  skip_if_not_installed("igraph")
+  sim <- simulate_dsf(~ 1, ~ 1, beta_sigma = log(5), ncell = 50, surface = TRUE, seed = 15)
+  small <- terra::crop(sim$landscape, terra::ext(20, 80, 20, 80))
+  expect_error(dsf(~ 1, ~ 1, sim$frame, cost = ~ cov, landscape = small), "outside")
+  holey <- sim$landscape; holey[1] <- NA
+  expect_error(dsf(~ 1, ~ 1, sim$frame, cost = ~ cov, landscape = holey), "missing values")
 })
 
 test_that("trap_cov supplies destination covariates and is part of the fixed design", {

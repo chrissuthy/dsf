@@ -1,9 +1,8 @@
 #' Build a least-cost distance calculator from a landscape raster
 #'
-#' Aggregates a landscape raster to the resolution used for path
-#' calculations, builds the 8-neighbour graph once, and returns a function
-#' that computes squared least-cost distances from a set of origins to a set
-#' of destinations for any value of the resistance parameters. Used
+#' Builds the 8-neighbour graph of a resistance raster once and returns a
+#' function that computes squared least-cost distances from a set of origins
+#' to a set of destinations for any value of the resistance parameters. Used
 #' internally by [dsf()] and [simulate_dsf()] for the non-Euclidean model.
 #'
 #' @details
@@ -15,48 +14,76 @@
 #' \eqn{\alpha = 0} every cell has cost 1 and the result approximates
 #' Euclidean distance on the grid.
 #'
+#' The raster is used at the resolution supplied. It is the user's
+#' responsibility to prepare it: it must contain every origin and
+#' destination, ideally with a buffer of about two dispersal scales beyond
+#' them so that least-cost paths are not forced along the raster edge; it
+#' must have no missing cells; and it should be coarse enough that Dijkstra
+#' from every origin at every likelihood evaluation is affordable (use
+#' [terra::aggregate()] beforehand). These conditions are checked and an
+#' informative error is raised if they fail.
+#'
 #' @param landscape A `SpatRaster` with one layer per cost covariate.
 #' @param cost One-sided formula naming the layers, e.g. `~ cov`. No intercept
 #'   is used: a constant multiplier on all costs rescales every distance by
 #'   the same factor and is absorbed by \eqn{\sigma}.
-#' @param cost_res Cell size (map units) for the path graph. The landscape is
-#'   aggregated by block mean to this resolution before the graph is built.
 #' @param src Two-column matrix or data frame of origin coordinates.
 #' @param dst Two-column matrix or data frame of destination coordinates.
 #' @param standardise Logical; centre and scale each cost covariate (mean 0,
-#'   unit SD over the aggregated raster cells) before building the cost
-#'   surface? Default `TRUE`. This keeps \eqn{\exp(\alpha^\top c)} well behaved
-#'   during optimisation and makes \eqn{\alpha} an effect per SD of the
-#'   covariate; the means and SDs used are returned in `scale` so that
-#'   \eqn{\alpha} can be converted to raw units (`alpha / sd`). A message
-#'   reports the scaling.
+#'   unit SD over the raster cells) before building the cost surface?
+#'   Default `TRUE`. This keeps \eqn{\exp(\alpha^\top c)} well behaved during
+#'   optimisation and makes \eqn{\alpha} an effect per SD of the covariate;
+#'   the means and SDs used are returned in `scale` so that \eqn{\alpha} can
+#'   be converted to raw units (`alpha / sd`). A message reports the scaling.
 #'
 #' @return A list with `fun(alpha)`, returning the n-by-J matrix of squared
 #'   least-cost distances for resistance vector `alpha`; `names`, the cost
-#'   covariate names; `raster`, the aggregated `SpatRaster`; and `scale`, a
-#'   data frame of the mean and SD applied to each covariate (all 0 and 1 if
+#'   covariate names; `raster`, the `SpatRaster` used; and `scale`, a data
+#'   frame of the mean and SD applied to each covariate (all 0 and 1 if
 #'   `standardise = FALSE`).
 #'
-#' @importFrom terra aggregate res cellFromXY values
+#' @importFrom terra res cellFromXY values ext
 #' @importFrom igraph make_graph distances
 #' @importFrom stats sd
 #' @keywords internal
-make_cost_fun <- function(landscape, cost, cost_res, src, dst, standardise = TRUE) {
+make_cost_fun <- function(landscape, cost, src, dst, standardise = TRUE) {
   if (!requireNamespace("igraph", quietly = TRUE))
     stop("package 'igraph' is required for the non-Euclidean DSF", call. = FALSE)
+  r <- landscape
 
-  ## aggregate to the path resolution
-  fac <- round(cost_res / terra::res(landscape)[1])
-  r   <- if (fac > 1) terra::aggregate(landscape, fact = fac, fun = "mean") else landscape
-
-  ## cost covariates: design matrix over cells, no intercept
+  ## ------------------------------------------------------------ checks
   vars <- all.vars(cost)
   miss <- setdiff(vars, names(r))
   if (length(miss)) stop("cost covariates not in landscape: ", paste(miss, collapse = ", "),
                          call. = FALSE)
+
+  src <- as.matrix(src); dst <- as.matrix(dst)
+  src_cell <- terra::cellFromXY(r, src)
+  dst_cell <- terra::cellFromXY(r, dst)
+  n_out <- sum(is.na(src_cell)) + sum(is.na(dst_cell))
+  if (n_out > 0) {
+    e  <- as.vector(terra::ext(r))
+    bb <- apply(rbind(src, dst), 2, range)
+    stop(n_out, " origin(s)/destination(s) fall outside the landscape raster. ",
+         "The resistance surface must cover every origin and destination, ideally ",
+         "with a buffer of about two dispersal scales beyond them so that ",
+         "least-cost paths are not forced along the raster edge. Raster extent: x ",
+         signif(e[1], 5), " to ", signif(e[2], 5), ", y ", signif(e[3], 5), " to ",
+         signif(e[4], 5), "; points span x ", signif(bb[1, 1], 5), " to ",
+         signif(bb[2, 1], 5), ", y ", signif(bb[1, 2], 5), " to ", signif(bb[2, 2], 5),
+         ".", call. = FALSE)
+  }
+
   cell_df <- as.data.frame(terra::values(r[[vars]]))
-  if (any(!is.finite(as.matrix(cell_df))))
-    stop("NA in cost covariates after aggregation", call. = FALSE)
+  for (v in vars) {
+    nbad <- sum(!is.finite(cell_df[[v]]))
+    if (nbad > 0)
+      stop("cost covariate '", v, "' has ", nbad, " of ", nrow(cell_df),
+           " cells with missing values. The resistance surface must be complete; ",
+           "fill or mask missing cells before fitting.", call. = FALSE)
+  }
+
+  ## ------------------------------------------------------------ standardise
   scale_df <- data.frame(var = vars, mean = 0, sd = 1)
   if (standardise) {
     for (i in seq_along(vars)) {
@@ -72,6 +99,7 @@ make_cost_fun <- function(landscape, cost, cost_res, src, dst, standardise = TRU
   }
   Xc <- stats::model.matrix(stats::update(cost, ~ . + 0), cell_df)
 
+  ## ------------------------------------------------------------ graph
   ## 8-neighbour edge list on the grid (cell ids are row-major in terra)
   nr <- nrow(r); nc <- ncol(r); cs <- terra::res(r)[1]
   id <- matrix(seq_len(nr * nc), nr, nc, byrow = TRUE)     # id[row, col]
@@ -86,11 +114,6 @@ make_cost_fun <- function(landscape, cost, cost_res, src, dst, standardise = TRU
   }
   g <- igraph::make_graph(edges = rbind(from, to), n = nr * nc, directed = FALSE)
 
-  ## map origins and destinations to cells
-  src_cell <- terra::cellFromXY(r, as.matrix(src))
-  dst_cell <- terra::cellFromXY(r, as.matrix(dst))
-  if (anyNA(src_cell) || anyNA(dst_cell))
-    stop("origins or destinations fall outside the landscape", call. = FALSE)
   usrc <- sort(unique(src_cell)); spos <- match(src_cell, usrc)
   udst <- sort(unique(dst_cell)); dpos <- match(dst_cell, udst)
 

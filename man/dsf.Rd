@@ -15,7 +15,6 @@ dsf(
   exclude_natal = FALSE,
   cost = NULL,
   landscape = NULL,
-  cost_res = 1,
   standardise_cost = TRUE,
   start = NULL,
   hessian = TRUE
@@ -42,10 +41,10 @@ passed to \code{\link[=dsf_frame]{dsf_frame()}}).}
 define the resistance surface, e.g. \code{~ cov}. \code{NULL} (default) fits the
 Euclidean model.}
 
-\item{landscape}{\code{SpatRaster} with the layers named in \code{cost}.}
-
-\item{cost_res}{Cell size for least-cost path calculations; the landscape
-is aggregated to this resolution. Coarser is faster.}
+\item{landscape}{\code{SpatRaster} with the layers named in \code{cost}, prepared by
+the user: complete (no \code{NA}), covering every origin and destination with
+a buffer, and coarse enough that repeated least-cost calculations are
+affordable (aggregate with \code{\link[terra:aggregate]{terra::aggregate()}} beforehand if needed).}
 
 \item{standardise_cost}{Logical; standardise the cost covariates before
 building the resistance surface (see \code{\link[=make_cost_fun]{make_cost_fun()}}). Default \code{TRUE}.}
@@ -103,8 +102,9 @@ year effect) cancels and is refused.
 With \code{cost} and \code{landscape} supplied, Euclidean distance is replaced by the
 least-cost (ecological) distance through a resistance surface whose cell
 cost is \eqn{\exp(\alpha^\top c(x))}, and \eqn{\alpha} is estimated
-alongside the other parameters (coefficients named \verb{cost:}). Paths are
-computed on the landscape aggregated to \code{cost_res}; see \code{\link[=make_cost_fun]{make_cost_fun()}}.
+alongside the other parameters (coefficients named \verb{cost:}). The raster is
+used at the resolution supplied and must cover all origins and
+destinations with no missing cells; see \code{\link[=make_cost_fun]{make_cost_fun()}}.
 \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
 likelihood-ratio test against the Euclidean fit tests the landscape effect.
 By default the cost covariates are standardised over the raster cells

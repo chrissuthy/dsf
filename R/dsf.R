@@ -26,8 +26,9 @@
 #' With `cost` and `landscape` supplied, Euclidean distance is replaced by the
 #' least-cost (ecological) distance through a resistance surface whose cell
 #' cost is \eqn{\exp(\alpha^\top c(x))}, and \eqn{\alpha} is estimated
-#' alongside the other parameters (coefficients named `cost:`). Paths are
-#' computed on the landscape aggregated to `cost_res`; see [make_cost_fun()].
+#' alongside the other parameters (coefficients named `cost:`). The raster is
+#' used at the resolution supplied and must cover all origins and
+#' destinations with no missing cells; see [make_cost_fun()].
 #' \eqn{\alpha = 0} recovers (grid-approximate) Euclidean distance, so a
 #' likelihood-ratio test against the Euclidean fit tests the landscape effect.
 #' By default the cost covariates are standardised over the raster cells
@@ -51,9 +52,10 @@
 #' @param cost Optional one-sided formula naming layers of `landscape` that
 #'   define the resistance surface, e.g. `~ cov`. `NULL` (default) fits the
 #'   Euclidean model.
-#' @param landscape `SpatRaster` with the layers named in `cost`.
-#' @param cost_res Cell size for least-cost path calculations; the landscape
-#'   is aggregated to this resolution. Coarser is faster.
+#' @param landscape `SpatRaster` with the layers named in `cost`, prepared by
+#'   the user: complete (no `NA`), covering every origin and destination with
+#'   a buffer, and coarse enough that repeated least-cost calculations are
+#'   affordable (aggregate with [terra::aggregate()] beforehand if needed).
 #' @param standardise_cost Logical; standardise the cost covariates before
 #'   building the resistance surface (see [make_cost_fun()]). Default `TRUE`.
 #' @param start Optional numeric vector of starting values, in the order
@@ -97,7 +99,7 @@
 #' @export
 dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
                 trap_tv = NULL, exclude_natal = FALSE,
-                cost = NULL, landscape = NULL, cost_res = 1, standardise_cost = TRUE,
+                cost = NULL, landscape = NULL, standardise_cost = TRUE,
                 start = NULL, hessian = TRUE) {
 
   ## ------------------------------------------------------------ frame
@@ -123,7 +125,7 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
   cost_fun <- NULL; k <- 0
   if (!is.null(cost)) {
     if (is.null(landscape)) stop("landscape is required when cost is supplied", call. = FALSE)
-    cost_fun <- make_cost_fun(landscape, cost, cost_res,
+    cost_fun <- make_cost_fun(landscape, cost,
                               fr$ind[, c("src_x", "src_y")], fr$traps[, c("x", "y")],
                               standardise = standardise_cost)
     k <- length(cost_fun$names)
@@ -171,7 +173,7 @@ dsf <- function(sigma = ~ 1, theta = ~ 1, data, trap_df = NULL, op_mat = NULL,
                  convergence = fit$convergence,
                  sigma = sigma, theta = theta, cost = cost, Xs = Xs, Xt = Xt,
                  n = n, J = J, frame = fr, avail = fr$avail, d2 = d2, obs = obs,
-                 cost_fun = cost_fun, cost_res = cost_res,
+                 cost_fun = cost_fun,
                  ind_df = fr$ind, trap_df = fr$traps, optim = fit),
             class = "dsf")
 }
